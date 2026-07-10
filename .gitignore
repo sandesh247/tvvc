@@ -1,0 +1,29 @@
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node
+node_modules/
+.env
+
+# Firebase
+.firebase/
+firebase-debug.log*
+
+# Mac
+.DS_Store
+
+# Misc
+*.log
+
+# Secrets — do not commit
+google-services.json
+android/app/google-services.json
+android/local.properties
+android/app/release.keystore
+web/.env
+
+# Build artifacts
+functions/lib/

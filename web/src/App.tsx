@@ -1,0 +1,243 @@
+import { useState, useEffect } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from './firebase';
+import PinScreen from './components/PinScreen';
+import Registration from './components/Registration';
+import ContactList from './components/ContactList';
+import CallScreen from './components/CallScreen';
+import { collection, onSnapshot, doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+
+export interface User {
+  id: string;
+  name: string;
+  lastSeen?: any; // Firestore Timestamp
+  fcmToken?: string;
+}
+
+declare global {
+  interface Window {
+    setFcmToken?: (token: string) => void;
+    tvvcFcmToken?: string;
+  }
+}
+
+function App() {
+  const [authState, setAuthState] = useState<'loading' | 'unauthenticated' | 'authenticated'>('loading');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [fcmToken, setFcmTokenState] = useState<string | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
+  const [activeCall, setActiveCall] = useState<{ remoteUserId: string; incoming: boolean } | null>(null);
+
+  // Listen for Firebase Auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // User is authenticated — check if they have a Firestore profile
+        try {
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (userDoc.exists()) {
+            setCurrentUser({ id: firebaseUser.uid, ...userDoc.data() } as User);
+          }
+          // If no profile exists, currentUser stays null → Registration screen shows
+        } catch (e) {
+          console.error('Error loading user profile:', e);
+        }
+        setAuthState('authenticated');
+      } else {
+        setCurrentUser(null);
+        setAuthState('unauthenticated');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Expose global function for Android WebView FCM token injection
+  useEffect(() => {
+    window.setFcmToken = (token: string) => {
+      console.log('Received FCM token from native app:', token);
+      setFcmTokenState(token);
+    };
+
+    if (window.tvvcFcmToken) {
+      console.log('Found FCM token already set:', window.tvvcFcmToken);
+      setFcmTokenState(window.tvvcFcmToken);
+    }
+  }, []);
+
+  // Sync FCM token to Firestore when it changes
+  useEffect(() => {
+    if (fcmToken && currentUser && currentUser.fcmToken !== fcmToken) {
+      setDoc(doc(db, 'users', currentUser.id), { fcmToken }, { merge: true });
+      setCurrentUser(prev => prev ? { ...prev, fcmToken } : null);
+    }
+  }, [fcmToken, currentUser]);
+
+  // Update lastSeen presence heartbeat for active currentUser
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const updatePresence = async (isOnline: boolean) => {
+      try {
+        const userDoc = doc(db, 'users', currentUser.id);
+        // On offline, set lastSeen to epoch 0 to immediately mark as offline
+        const lastSeenVal = isOnline ? serverTimestamp() : new Date(0);
+        await setDoc(userDoc, { lastSeen: lastSeenVal }, { merge: true });
+      } catch (err) {
+        console.error('Failed to update presence status:', err);
+      }
+    };
+
+    // Mark online immediately on mount/auth
+    updatePresence(true);
+
+    // Send heartbeat every 60 seconds if page is visible
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        updatePresence(true);
+      }
+    }, 60000);
+
+    // Mark online when returning to app
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        updatePresence(true);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    // Try to mark offline on page unload
+    const handleUnload = () => {
+      updatePresence(false);
+    };
+    window.addEventListener('beforeunload', handleUnload);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('beforeunload', handleUnload);
+      updatePresence(false);
+    };
+  }, [currentUser]);
+
+  // Listen for all users (only when authenticated)
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+    const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
+      const usersData: User[] = [];
+      snapshot.forEach((userDoc) => {
+        usersData.push({ id: userDoc.id, ...userDoc.data() } as User);
+      });
+      setUsers(usersData);
+    });
+    return () => unsubscribe();
+  }, [authState]);
+
+  // Listen for incoming calls
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const unsubscribe = onSnapshot(collection(db, 'calls'), (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const callData = change.doc.data();
+          const callId = change.doc.id;
+          const [callerId, calleeId] = callId.split('_');
+
+          // Filter stale calls — ignore documents older than 30 seconds
+          const createdAt = callData.createdAt?.toDate?.();
+          if (createdAt && Date.now() - createdAt.getTime() > 30000) return;
+          // Also ignore calls with no timestamp (shouldn't happen, but be safe)
+          if (!callData.createdAt) return;
+
+          if (calleeId === currentUser.id) {
+            handleIncomingCall(callerId);
+          }
+        }
+      });
+    });
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  const handleRegister = async (name: string) => {
+    const firebaseUser = auth.currentUser;
+    if (!firebaseUser) return;
+
+    const user: User = { id: firebaseUser.uid, name, lastSeen: serverTimestamp() };
+    if (fcmToken) {
+      user.fcmToken = fcmToken;
+    }
+
+    try {
+      await setDoc(doc(db, 'users', firebaseUser.uid), user);
+      setCurrentUser(user);
+    } catch (e) {
+      console.error('Error registering user:', e);
+    }
+  };
+
+  const handleChangeName = async (newName: string) => {
+    if (!currentUser) return;
+    try {
+      await setDoc(doc(db, 'users', currentUser.id), { name: newName }, { merge: true });
+      setCurrentUser(prev => prev ? { ...prev, name: newName } : null);
+    } catch (e) {
+      console.error('Error updating name:', e);
+    }
+  };
+
+  const handleInitiateCall = (remoteUserId: string) => {
+    setActiveCall({ remoteUserId, incoming: false });
+  };
+
+  const handleIncomingCall = (remoteUserId: string) => {
+    setActiveCall({ remoteUserId, incoming: true });
+  };
+
+  const handleEndCall = () => {
+    setActiveCall(null);
+  };
+
+  // Loading state while Firebase Auth initializes
+  if (authState === 'loading') {
+    return (
+      <div className="app-container">
+        <div className="content" style={{ justifyContent: 'center', alignItems: 'center' }}>
+          <p style={{ color: 'var(--wa-text-light)', fontSize: '20px' }}>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not authenticated — show PIN screen
+  if (authState === 'unauthenticated') {
+    return <PinScreen onAuthenticated={() => setAuthState('authenticated')} />;
+  }
+
+  // Authenticated but no profile — show Registration
+  if (!currentUser) {
+    return <Registration onRegister={handleRegister} />;
+  }
+
+  // Authenticated with profile — show Contacts or Call
+  return (
+    <div className="app-container">
+      {activeCall ? (
+        <CallScreen
+          currentUser={currentUser}
+          remoteUserId={activeCall.remoteUserId}
+          isIncoming={activeCall.incoming}
+          onEndCall={handleEndCall}
+        />
+      ) : (
+        <ContactList
+          currentUser={currentUser}
+          users={users.filter(u => u.id !== currentUser.id)}
+          onCallUser={handleInitiateCall}
+          onChangeName={handleChangeName}
+        />
+      )}
+    </div>
+  );
+}
+
+export default App;

@@ -1,0 +1,415 @@
+:root {
+  --wa-green: #25D366;
+  --wa-teal: #128C7E;
+  --wa-teal-dark: #075E54;
+  --wa-light: #ECE5DD;
+  --wa-white: #FFFFFF;
+  --wa-gray: #F0F2F5;
+  --wa-text: #111B21;
+  --wa-text-light: #667781;
+  --wa-red: #ea0038;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--wa-light);
+  color: var(--wa-text);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* TV Specific Styles */
+button:focus, input:focus, .contact-item:focus {
+  outline: 4px solid var(--wa-green);
+  outline-offset: 2px;
+  background-color: #e9edef;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: var(--wa-white);
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.header {
+  background-color: var(--wa-teal);
+  color: var(--wa-white);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  font-size: 24px;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.content {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Registration */
+.registration-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 24px;
+}
+
+.registration-input {
+  padding: 16px 24px;
+  font-size: 24px;
+  border: 1px solid #d1d7db;
+  border-radius: 8px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.btn {
+  background-color: var(--wa-green);
+  color: white;
+  border: none;
+  padding: 16px 32px;
+  font-size: 24px;
+  border-radius: 24px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.btn:hover {
+  background-color: var(--wa-teal);
+}
+
+/* Contact List */
+.contact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background-color: #f0f2f5;
+}
+
+.contact-item {
+  display: flex;
+  align-items: center;
+  padding: 20px 24px;
+  background-color: var(--wa-white);
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  border-bottom: 1px solid #f2f2f2;
+}
+
+.contact-avatar {
+  width: 64px;
+  height: 64px;
+  background-color: #dfe5e7;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 20px;
+  color: var(--wa-white);
+}
+
+.contact-info {
+  flex: 1;
+}
+
+.contact-name {
+  font-size: 24px;
+  font-weight: 400;
+}
+
+.contact-status {
+  font-size: 16px;
+  color: var(--wa-text-light);
+  margin-top: 4px;
+}
+
+.contact-status.online {
+  color: var(--wa-green);
+  font-weight: 500;
+}
+
+.contact-status.offline {
+  color: var(--wa-text-light);
+}
+
+.call-icon {
+  color: var(--wa-teal);
+  padding: 12px;
+}
+
+/* Call Screen */
+.call-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #000;
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+}
+
+.video-view {
+  flex: 1;
+  background-color: #222;
+  position: relative;
+}
+
+.remote-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.local-video {
+  position: absolute;
+  bottom: 120px;
+  right: 40px;
+  width: 240px;
+  height: 320px;
+  background-color: #444;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 2px solid white;
+}
+
+.call-controls {
+  position: absolute;
+  bottom: 40px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 32px;
+}
+
+.control-btn {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: white;
+}
+
+.control-btn.end {
+  background-color: var(--wa-red);
+}
+
+.control-btn.answer {
+  background-color: var(--wa-green);
+}
+
+.incoming-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  z-index: 200;
+}
+
+.caller-name {
+  font-size: 48px;
+  margin-bottom: 60px;
+}
+
+.incoming-controls {
+  display: flex;
+  gap: 60px;
+}
+
+/* PIN Screen */
+.pin-dots {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.pin-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--wa-teal);
+  transition: background-color 0.15s;
+}
+
+.pin-dot.filled {
+  background-color: var(--wa-teal);
+}
+
+.pin-error {
+  color: var(--wa-red);
+  font-size: 18px;
+  margin-bottom: 8px;
+  min-height: 28px;
+}
+
+.pin-loading {
+  color: var(--wa-text-light);
+  font-size: 18px;
+  margin-bottom: 8px;
+  min-height: 28px;
+}
+
+.pin-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  max-width: 320px;
+  width: 100%;
+}
+
+.pin-key {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: 2px solid #d1d7db;
+  background-color: var(--wa-white);
+  font-size: 32px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  transition: background-color 0.2s, border-color 0.2s;
+  color: var(--wa-text);
+}
+
+.pin-key:hover {
+  background-color: #e9edef;
+  border-color: var(--wa-teal);
+}
+
+.pin-key:focus-visible {
+  outline: 4px solid var(--wa-green);
+  outline-offset: 2px;
+  background-color: #e9edef;
+}
+
+.pin-key:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pin-key-spacer {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto;
+}
+
+@media (max-height: 680px) {
+  .header {
+    padding: 10px 20px;
+    font-size: 20px;
+  }
+  .content {
+    padding: 12px;
+  }
+  .registration-container {
+    gap: 12px;
+  }
+  .registration-container h2 {
+    font-size: 24px;
+    margin: 0;
+  }
+  .registration-container p {
+    margin-bottom: 12px !important;
+    font-size: 14px;
+  }
+  .pin-dots {
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .pin-dot {
+    width: 16px;
+    height: 16px;
+  }
+  .pin-error, .pin-loading {
+    font-size: 14px;
+    min-height: 20px;
+    margin-bottom: 4px;
+  }
+  .pin-keypad {
+    gap: 8px;
+    max-width: 260px;
+  }
+  .pin-key {
+    width: 60px;
+    height: 60px;
+    font-size: 24px;
+  }
+  .pin-key-spacer {
+    width: 60px;
+    height: 60px;
+  }
+  .btn {
+    padding: 12px 24px;
+    font-size: 18px;
+  }
+  .registration-input {
+    padding: 12px 18px;
+    font-size: 18px;
+    max-width: 320px;
+  }
+  .contact-item {
+    padding: 12px 16px;
+  }
+  .contact-avatar {
+    width: 48px;
+    height: 48px;
+    margin-right: 12px;
+  }
+  .contact-name {
+    font-size: 18px;
+  }
+  .contact-status {
+    font-size: 14px;
+  }
+  .call-icon {
+    padding: 8px;
+  }
+  .local-video {
+    bottom: 80px;
+    right: 20px;
+    width: 140px;
+    height: 180px;
+  }
+  .call-controls {
+    bottom: 20px;
+  }
+}
