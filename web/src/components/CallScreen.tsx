@@ -140,6 +140,15 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
   const answerCall = useCallback(async () => {
     if (!pc.current) return;
+
+    const callSnapshot = await getDoc(callDoc);
+    const callData = callSnapshot.data();
+    if (!callData) {
+      console.warn('Call document does not exist.');
+      hangup();
+      return;
+    }
+
     setCallState('connected');
 
     const offerCandidates = collection(callDoc, 'offerCandidates');
@@ -150,9 +159,6 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
         addDoc(answerCandidates, event.candidate.toJSON());
       }
     };
-
-    const callData = (await getDoc(callDoc)).data();
-    if (!callData) return;
 
     const offerDescription = callData.offer;
     await pc.current.setRemoteDescription(new RTCSessionDescription(offerDescription));
