@@ -22,7 +22,13 @@ export const onCallCreated = onDocumentCreated({
   if (!data) return;
 
   const callId = event.params.callId;
-  const [callerId, calleeId] = callId.split("_");
+  const callerId = data.callerId;
+  const calleeId = data.calleeId;
+
+  if (!callerId || !calleeId) {
+    console.log(`Missing callerId or calleeId in document ${callId}`);
+    return;
+  }
 
   console.log(`New call initiated from ${callerId} to ${calleeId}`);
 

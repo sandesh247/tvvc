@@ -15,26 +15,18 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Calls — any authenticated user can create or read call documents.
-    // Deletion is restricted to the caller or callee encoded in the document
-    // ID (format: "{callerId}_{calleeId}") to prevent one device from
-    // hanging up someone else's call.
+    // Calls — restricted to caller or callee.
     match /calls/{callId} {
-      allow read, create: if request.auth != null;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null &&
-        (request.auth.uid == callId.split('_')[0] ||
-         request.auth.uid == callId.split('_')[1]);
+      allow create: if request.auth != null && request.resource.data.callerId == request.auth.uid;
+      allow read, update, delete: if request.auth != null &&
+        (resource.data.callerId == request.auth.uid || resource.data.calleeId == request.auth.uid);
     }
 
     // Call subcollections (ICE candidates for WebRTC signaling).
-    // Same participant restriction applies to deletes.
     match /calls/{callId}/{subcol}/{docId} {
-      allow read, create: if request.auth != null;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null &&
-        (request.auth.uid == callId.split('_')[0] ||
-         request.auth.uid == callId.split('_')[1]);
+      allow read, create, update, delete: if request.auth != null &&
+        (get(/databases/$(database)/documents/calls/$(callId)).data.callerId == request.auth.uid ||
+         get(/databases/$(database)/documents/calls/$(callId)).data.calleeId == request.auth.uid);
     }
   }
 }

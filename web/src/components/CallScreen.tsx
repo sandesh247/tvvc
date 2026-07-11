@@ -109,7 +109,12 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       type: offerDescription.type,
     };
 
-    await setDoc(callDoc, { offer, createdAt: serverTimestamp() });
+    await setDoc(callDoc, {
+      offer,
+      callerId: currentUser.id,
+      calleeId: remoteUserId,
+      createdAt: serverTimestamp()
+    });
 
     // Listen for remote answer
     const unsub1 = onSnapshot(callDoc, (snapshot) => {

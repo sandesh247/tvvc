@@ -5,7 +5,7 @@ import PinScreen from './components/PinScreen';
 import Registration from './components/Registration';
 import ContactList from './components/ContactList';
 import CallScreen from './components/CallScreen';
-import { collection, onSnapshot, doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, serverTimestamp, query, where } from 'firebase/firestore';
 
 export interface User {
   id: string;
@@ -141,12 +141,12 @@ function App() {
     if (!currentUser) return;
     const userId = currentUser.id;
 
-    const unsubscribe = onSnapshot(collection(db, 'calls'), (snapshot) => {
+    const q = query(collection(db, 'calls'), where('calleeId', '==', userId));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const callData = change.doc.data();
-          const callId = change.doc.id;
-          const [callerId, calleeId] = callId.split('_');
+          const callerId = callData.callerId;
 
           // Filter stale calls — ignore documents older than 30 seconds
           const createdAt = callData.createdAt?.toDate?.();
@@ -154,7 +154,7 @@ function App() {
           // Also ignore calls with no timestamp (shouldn't happen, but be safe)
           if (!callData.createdAt) return;
 
-          if (calleeId === userId) {
+          if (callerId) {
             handleIncomingCall(callerId);
           }
         }
