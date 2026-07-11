@@ -16,8 +16,8 @@ android {
         applicationId = "com.sandesh247.tvvc"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
         buildConfigField("String", "WEB_APP_URL", "\"https://gh-tvvc.web.app\"")
     }
 
