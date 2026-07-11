@@ -17,7 +17,6 @@ export interface User {
 declare global {
   interface Window {
     setFcmToken?: (token: string) => void;
-    tvvcFcmToken?: string;
   }
 }
 
@@ -51,17 +50,14 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // Expose global function for Android WebView FCM token injection
+  // Expose global function for Android WebView FCM token injection.
+  // window.setFcmToken is the only path needed; the WebView calls it
+  // via evaluateJavascript once the FCM token is ready.
   useEffect(() => {
     window.setFcmToken = (token: string) => {
       console.log('Received FCM token from native app:', token);
       setFcmTokenState(token);
     };
-
-    if (window.tvvcFcmToken) {
-      console.log('Found FCM token already set:', window.tvvcFcmToken);
-      setFcmTokenState(window.tvvcFcmToken);
-    }
   }, []);
 
   // Sync FCM token to Firestore when it changes
@@ -72,16 +68,20 @@ function App() {
     }
   }, [fcmToken, currentUser]);
 
-  // Update lastSeen presence heartbeat for active currentUser
+  // Update lastSeen presence heartbeat for the active user.
+  // The dependency is on currentUser.id only — we don't want to restart
+  // the interval (and briefly flicker offline) every time a secondary
+  // field like fcmToken or name is updated on the currentUser object.
   useEffect(() => {
     if (!currentUser) return;
+    const userId = currentUser.id;
 
     const updatePresence = async (isOnline: boolean) => {
       try {
-        const userDoc = doc(db, 'users', currentUser.id);
+        const userDocRef = doc(db, 'users', userId);
         // On offline, set lastSeen to epoch 0 to immediately mark as offline
         const lastSeenVal = isOnline ? serverTimestamp() : new Date(0);
-        await setDoc(userDoc, { lastSeen: lastSeenVal }, { merge: true });
+        await setDoc(userDocRef, { lastSeen: lastSeenVal }, { merge: true });
       } catch (err) {
         console.error('Failed to update presence status:', err);
       }
@@ -117,7 +117,8 @@ function App() {
       window.removeEventListener('beforeunload', handleUnload);
       updatePresence(false);
     };
-  }, [currentUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]); // Only restart when the signed-in user changes, not on field updates
 
   // Listen for all users (only when authenticated)
   useEffect(() => {
@@ -132,9 +133,13 @@ function App() {
     return () => unsubscribe();
   }, [authState]);
 
-  // Listen for incoming calls
+  // Listen for incoming calls.
+  // Depends on currentUser?.id only so that FCM token / name updates
+  // don't tear down and recreate the subscription (which could briefly
+  // create two concurrent listeners and deliver a duplicate call event).
   useEffect(() => {
     if (!currentUser) return;
+    const userId = currentUser.id;
 
     const unsubscribe = onSnapshot(collection(db, 'calls'), (snapshot) => {
       snapshot.docChanges().forEach((change) => {
@@ -149,14 +154,15 @@ function App() {
           // Also ignore calls with no timestamp (shouldn't happen, but be safe)
           if (!callData.createdAt) return;
 
-          if (calleeId === currentUser.id) {
+          if (calleeId === userId) {
             handleIncomingCall(callerId);
           }
         }
       });
     });
     return () => unsubscribe();
-  }, [currentUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]); // Only re-subscribe when the user identity changes
 
   const handleRegister = async (name: string) => {
     const firebaseUser = auth.currentUser;
