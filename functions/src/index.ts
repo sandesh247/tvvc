@@ -85,6 +85,24 @@ export const verifyPin = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Device ID is required.");
   }
 
+  // Rate-limit: max 10 failed attempts per device per hour.
+  // Counters are stored in /admin/pinAttempts/{deviceId} which clients
+  // cannot read or write (see firestore.rules).
+  const safeDeviceId = deviceId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const attemptRef = db.doc(`admin/pinAttempts/${safeDeviceId}`);
+  const attemptDoc = await attemptRef.get();
+  const now = Date.now();
+  const WINDOW_MS = 60 * 60 * 1000; // 1 hour
+  const MAX_ATTEMPTS = 10;
+
+  if (attemptDoc.exists) {
+    const { count = 0, windowStart = 0 } = attemptDoc.data() as { count: number; windowStart: number };
+    if (now - windowStart < WINDOW_MS && count >= MAX_ATTEMPTS) {
+      console.warn(`Rate limit exceeded for device ${safeDeviceId}`);
+      throw new HttpsError("resource-exhausted", "Too many failed attempts. Please try again later.");
+    }
+  }
+
   // Read the stored PIN from the admin config document
   const configDoc = await db.doc("admin/config").get();
   if (!configDoc.exists) {
@@ -100,7 +118,19 @@ export const verifyPin = onCall(async (request) => {
   }
 
   if (pin !== String(storedPin)) {
+    // Increment the failure counter (or start a new window if expired)
+    const existingData = attemptDoc.exists ? (attemptDoc.data() as { count: number; windowStart: number }) : null;
+    const isNewWindow = !existingData || now - existingData.windowStart >= WINDOW_MS;
+    await attemptRef.set({
+      count: isNewWindow ? 1 : existingData!.count + 1,
+      windowStart: isNewWindow ? now : existingData!.windowStart,
+    });
     throw new HttpsError("permission-denied", "Invalid PIN.");
+  }
+
+  // On success, clear the rate-limit counter
+  if (attemptDoc.exists) {
+    await attemptRef.delete();
   }
 
   // Create a custom auth token using the deviceId as the UID
