@@ -157,10 +157,23 @@ Run the following commands from the root directory of the repository to deploy a
    ```kotlin
    buildConfigField("String", "WEB_APP_URL", "\"https://your-project.web.app\"")
    ```
-4. Compile the APK using Gradle:
-   ```bash
-   cd android
-   ./gradlew assembleRelease
-   ```
-5. The signed, ready-to-install Android TV APK will be built at:  
-   `android/app/build/outputs/apk/release/app-release.wrapper.apk` (or similar depending on output configuration). You can sideload this onto your TV.
+4. Compile the APK (for direct sideloading) or the App Bundle (for Google Play Console) using Gradle:
+   - **For Sideloading (APK):**
+     ```bash
+     cd android
+     ./gradlew assembleRelease
+     ```
+   - **For Google Play Store (AAB):**
+     ```bash
+     cd android
+     ./gradlew bundleRelease
+     ```
+5. Find your generated build outputs:
+   - **APK (Sideload):** `android/app/build/outputs/apk/release/app-release.apk`
+   - **AAB (Google Play):** `android/app/build/outputs/bundle/release/app-release.aab`
+6. **Publishing to Google Play (Internal Testing):**
+   - Go to your [Google Play Console](https://play.google.com/console/).
+   - Select your app, navigate to **Release** > **Internal testing**, and upload the `app-release.aab` bundle.
+   - Set up your tester email list and share the tester opt-in link with family members.
+   - Go to **Advanced settings** > **Release types** and opt-in to **Android TV** (requires 16:9 TV screenshots and a 320x180 px banner).
+
