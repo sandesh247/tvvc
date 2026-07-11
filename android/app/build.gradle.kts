@@ -16,8 +16,8 @@ android {
         applicationId = "com.sandesh247.tvvc"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
         buildConfigField("String", "WEB_APP_URL", "\"https://gh-tvvc.web.app\"")
     }
 
@@ -77,3 +77,13 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.espresso.core)
 }
+
+tasks.register<Exec>("syncIcons") {
+    workingDir = projectDir.parentFile.parentFile
+    commandLine("node", "scripts/sync-icons.js")
+}
+
+tasks.named("preBuild") {
+    dependsOn("syncIcons")
+}
+
