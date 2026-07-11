@@ -5,7 +5,7 @@ import type { User } from '../App';
 import { db, functions } from '../firebase';
 import {
   collection, doc, setDoc, getDoc, onSnapshot, updateDoc,
-  addDoc, deleteDoc, getDocs, serverTimestamp
+  addDoc, deleteDoc, getDocs, serverTimestamp, runTransaction
 } from 'firebase/firestore';
 
 interface CallScreenProps {
@@ -26,7 +26,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
   const unsubscribes = useRef<(() => void)[]>([]);
   const isHangingUp = useRef(false);
 
-  const callDocId = isIncoming ? `${remoteUserId}_${currentUser.id}` : `${currentUser.id}_${remoteUserId}`;
+  const callDocId = currentUser.id < remoteUserId ? `${currentUser.id}_${remoteUserId}` : `${remoteUserId}_${currentUser.id}`;
 
   // Memoize the Firestore document reference — it never changes for the life of this call.
   const callDoc = useMemo(() => doc(db, 'calls', callDocId), [callDocId]);
@@ -93,6 +93,42 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     const offerCandidates = collection(callDoc, 'offerCandidates');
     const answerCandidates = collection(callDoc, 'answerCandidates');
 
+    // Use a transaction to safely handle simultaneous outgoing call attempts
+    let callDataToAnswer = null;
+    try {
+      await runTransaction(db, async (transaction) => {
+        const docSnapshot = await transaction.get(callDoc);
+        if (docSnapshot.exists()) {
+          const data = docSnapshot.data();
+          // Filter stale calls: ignore if document is older than 30 seconds
+          const createdAt = data?.createdAt?.toDate?.();
+          const isStale = createdAt && (Date.now() - createdAt.getTime() > 30000);
+
+          if (!isStale && data && data.callerId === remoteUserId) {
+            // The other user called us first. We should act as the callee.
+            callDataToAnswer = data;
+            return;
+          }
+        }
+
+        // Otherwise, we claim the caller spot
+        transaction.set(callDoc, {
+          status: 'initiating',
+          callerId: currentUser.id,
+          calleeId: remoteUserId,
+          createdAt: serverTimestamp()
+        });
+      });
+    } catch (e) {
+      console.error('Transaction failed while starting call:', e);
+    }
+
+    if (callDataToAnswer) {
+      console.log('Mutual call detected: remote user called first. Answering their call instead.');
+      await answerCall();
+      return;
+    }
+
     // Get candidates for caller, save to db
     pc.current.onicecandidate = (event) => {
       if (event.candidate) {
@@ -109,12 +145,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       type: offerDescription.type,
     };
 
-    await setDoc(callDoc, {
-      offer,
-      callerId: currentUser.id,
-      calleeId: remoteUserId,
-      createdAt: serverTimestamp()
-    });
+    await updateDoc(callDoc, { offer, status: 'ringing' });
 
     // Listen for remote answer
     const unsub1 = onSnapshot(callDoc, (snapshot) => {
@@ -141,15 +172,43 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       });
     });
     unsubscribes.current.push(unsub2);
-  }, [callDoc, hangup]);
+  }, [callDoc, hangup, answerCall, currentUser.id, remoteUserId]);
 
   const answerCall = useCallback(async () => {
     if (!pc.current) return;
 
     const callSnapshot = await getDoc(callDoc);
-    const callData = callSnapshot.data();
+    let callData = callSnapshot.data();
     if (!callData) {
       console.warn('Call document does not exist.');
+      hangup();
+      return;
+    }
+
+    // Wait for the offer to be ready if caller is still generating it
+    if (!callData.offer) {
+      console.log('Offer is not ready yet, waiting for it to be created...');
+      callData = await new Promise((resolve) => {
+        const unsubscribe = onSnapshot(callDoc, (snapshot) => {
+          const data = snapshot.data();
+          if (data && data.offer) {
+            unsubscribe();
+            resolve(data);
+          } else if (!snapshot.exists()) {
+            unsubscribe();
+            resolve(null);
+          }
+        });
+        // Timeout after 10 seconds
+        setTimeout(() => {
+          unsubscribe();
+          resolve(null);
+        }, 10000);
+      }) as any;
+    }
+
+    if (!callData || !callData.offer) {
+      console.warn('Failed to obtain a valid call offer.');
       hangup();
       return;
     }
@@ -176,7 +235,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       sdp: answerDescription.sdp,
     };
 
-    await updateDoc(callDoc, { answer });
+    await updateDoc(callDoc, { answer, status: 'connected' });
 
     const unsub = onSnapshot(offerCandidates, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
