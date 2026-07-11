@@ -24,6 +24,7 @@
         android:theme="@style/Theme.TVVC">
         <activity
             android:name=".MainActivity"
+            android:launchMode="singleInstance"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:exported="true">

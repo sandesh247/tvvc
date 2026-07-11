@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from './firebase';
 import PinScreen from './components/PinScreen';
@@ -185,17 +185,17 @@ function App() {
     }
   };
 
-  const handleInitiateCall = (remoteUserId: string) => {
+  const handleInitiateCall = useCallback((remoteUserId: string) => {
     setActiveCall({ remoteUserId, incoming: false });
-  };
+  }, []);
 
-  const handleIncomingCall = (remoteUserId: string) => {
+  const handleIncomingCall = useCallback((remoteUserId: string) => {
     setActiveCall({ remoteUserId, incoming: true });
-  };
+  }, []);
 
-  const handleEndCall = () => {
+  const handleEndCall = useCallback(() => {
     setActiveCall(null);
-  };
+  }, []);
 
   // Loading state while Firebase Auth initializes
   if (authState === 'loading') {
