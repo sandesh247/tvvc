@@ -78,26 +78,29 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
               No other TVs are online right now.
             </div>
           ) : (
-            users.map((user) => (
-              <button 
-                key={user.id} 
-                className="contact-item"
-                onClick={() => onCallUser(user.id)}
-              >
-                <div className="contact-avatar">
-                  <UserIcon size={32} />
-                </div>
-                <div className="contact-info">
-                  <div className="contact-name">{user.name}</div>
-                  <div className={`contact-status ${getStatus(user)}`}>
-                    {getStatus(user)}
+            users.map((user) => {
+              const status = getStatus(user);
+              return (
+                <button
+                  key={user.id}
+                  className="contact-item"
+                  onClick={() => onCallUser(user.id)}
+                >
+                  <div className="contact-avatar">
+                    <UserIcon size={32} />
                   </div>
-                </div>
-                <div className="call-icon">
-                  <Phone size={28} />
-                </div>
-              </button>
-            ))
+                  <div className="contact-info">
+                    <div className="contact-name">{user.name}</div>
+                    <div className={`contact-status ${status}`}>
+                      {status}
+                    </div>
+                  </div>
+                  <div className="call-icon">
+                    <Phone size={28} />
+                  </div>
+                </button>
+              );
+            })
           )}
         </div>
       </div>

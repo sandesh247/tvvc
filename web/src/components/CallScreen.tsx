@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Phone, PhoneOff } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import type { User } from '../App';
 import { db, functions } from '../firebase';
 import {
   collection, doc, setDoc, getDoc, onSnapshot, updateDoc,
-  addDoc, deleteDoc, serverTimestamp
+  addDoc, deleteDoc, getDocs, serverTimestamp
 } from 'firebase/firestore';
 
 interface CallScreenProps {
@@ -16,7 +16,7 @@ interface CallScreenProps {
 }
 
 export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEndCall }: CallScreenProps) {
-  const [callState, setCallState] = useState<'ringing' | 'connected' | 'ended'>(isIncoming ? 'ringing' : 'connected');
+  const [callState, setCallState] = useState<'ringing' | 'connected'>(isIncoming ? 'ringing' : 'connected');
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -27,6 +27,9 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
   const isHangingUp = useRef(false);
 
   const callDocId = isIncoming ? `${remoteUserId}_${currentUser.id}` : `${currentUser.id}_${remoteUserId}`;
+
+  // Memoize the Firestore document reference — it never changes for the life of this call.
+  const callDoc = useMemo(() => doc(db, 'calls', callDocId), [callDocId]);
 
   // Play ringtone for incoming calls
   useEffect(() => {
@@ -48,8 +51,6 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     };
   }, [isIncoming, callState]);
 
-
-
   const hangup = useCallback(async () => {
     if (isHangingUp.current) return;
     isHangingUp.current = true;
@@ -65,20 +66,30 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       localStream.current.getTracks().forEach(track => track.stop());
     }
 
-    // Clean up the call document
-    const callDoc = doc(collection(db, 'calls'), callDocId);
+    // Clean up the call document and its ICE candidate subcollections.
+    // Firestore does not recursively delete subcollections, so we do it manually.
+    // Both peers may attempt this concurrently; deleteDoc on a missing doc is a no-op.
     try {
+      const offerCandidates = collection(callDoc, 'offerCandidates');
+      const answerCandidates = collection(callDoc, 'answerCandidates');
+      const [offerSnap, answerSnap] = await Promise.all([
+        getDocs(offerCandidates),
+        getDocs(answerCandidates),
+      ]);
+      await Promise.all([
+        ...offerSnap.docs.map(d => deleteDoc(d.ref)),
+        ...answerSnap.docs.map(d => deleteDoc(d.ref)),
+      ]);
       await deleteDoc(callDoc);
     } catch (e) {
-      console.error(e);
+      console.error('Error cleaning up call document:', e);
     }
 
     onEndCall();
-  }, [callDocId, onEndCall]);
+  }, [callDoc, onEndCall]);
 
   const startCall = useCallback(async () => {
     if (!pc.current) return;
-    const callDoc = doc(collection(db, 'calls'), callDocId);
     const offerCandidates = collection(callDoc, 'offerCandidates');
     const answerCandidates = collection(callDoc, 'answerCandidates');
 
@@ -125,13 +136,12 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       });
     });
     unsubscribes.current.push(unsub2);
-  }, [callDocId, hangup]);
+  }, [callDoc, hangup]);
 
-  const answerCall = async () => {
+  const answerCall = useCallback(async () => {
     if (!pc.current) return;
     setCallState('connected');
 
-    const callDoc = doc(collection(db, 'calls'), callDocId);
     const offerCandidates = collection(callDoc, 'offerCandidates');
     const answerCandidates = collection(callDoc, 'answerCandidates');
 
@@ -175,7 +185,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       }
     });
     unsubscribes.current.push(unsubDoc);
-  };
+  }, [callDoc, hangup]);
 
 
   useEffect(() => {
@@ -196,7 +206,9 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
         console.warn('Failed to fetch TURN credentials, using STUN only:', err);
       }
 
-      pc.current = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 10 });
+      // iceCandidatePoolSize: 2 is plenty for a home LAN; the default tutorial
+      // value of 10 generates unnecessary STUN traffic.
+      pc.current = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 2 });
 
       // Setup media streams
       remoteStream.current = new MediaStream();
