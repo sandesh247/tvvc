@@ -45,8 +45,6 @@ android {
     }
     buildFeatures {
         buildConfig = true
-        aidl = false
-        shaders = false
     }
 
     packaging {
@@ -64,11 +62,12 @@ dependencies {
     // Core Android
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.activity.compose)
 
     // Firebase
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.firestore)
 
     // Tests
     testImplementation(libs.junit)
