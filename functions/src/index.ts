@@ -91,11 +91,22 @@ export const verifyPin = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Device ID is required.");
   }
 
-  // Rate-limit: max 10 failed attempts per device per hour.
-  // Counters are stored in /admin/pinAttempts/{deviceId} which clients
-  // cannot read or write (see firestore.rules).
-  const safeDeviceId = deviceId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const attemptRef = db.doc(`admin/pinAttempts/${safeDeviceId}`);
+  // Rate-limit by client IP address: max 10 failed attempts per IP per hour.
+  // Extract client IP address from request headers or socket
+  const rawRequest = request.rawRequest;
+  let ip = "unknown_ip";
+  const xForwardedFor = rawRequest?.headers['x-forwarded-for'];
+  if (typeof xForwardedFor === 'string') {
+    ip = xForwardedFor.split(',')[0].trim();
+  } else if (rawRequest?.headers['x-appengine-user-ip']) {
+    ip = String(rawRequest.headers['x-appengine-user-ip']);
+  } else if (rawRequest?.socket?.remoteAddress) {
+    ip = rawRequest.socket.remoteAddress;
+  }
+
+  // Sanitize IP address for use in Firestore document ID
+  const safeIp = ip.replace(/[^a-zA-Z0-9.-]/g, "_");
+  const attemptRef = db.doc(`admin/pinAttempts/${safeIp}`);
   const attemptDoc = await attemptRef.get();
   const now = Date.now();
   const WINDOW_MS = 60 * 60 * 1000; // 1 hour
@@ -104,7 +115,7 @@ export const verifyPin = onCall(async (request) => {
   if (attemptDoc.exists) {
     const { count = 0, windowStart = 0 } = attemptDoc.data() as { count: number; windowStart: number };
     if (now - windowStart < WINDOW_MS && count >= MAX_ATTEMPTS) {
-      console.warn(`Rate limit exceeded for device ${safeDeviceId}`);
+      console.warn(`Rate limit exceeded for IP ${safeIp}`);
       throw new HttpsError("resource-exhausted", "Too many failed attempts. Please try again later.");
     }
   }
@@ -124,12 +135,17 @@ export const verifyPin = onCall(async (request) => {
   }
 
   if (pin !== String(storedPin)) {
-    // Increment the failure counter (or start a new window if expired)
-    const existingData = attemptDoc.exists ? (attemptDoc.data() as { count: number; windowStart: number }) : null;
-    const isNewWindow = !existingData || now - existingData.windowStart >= WINDOW_MS;
-    await attemptRef.set({
-      count: isNewWindow ? 1 : existingData!.count + 1,
-      windowStart: isNewWindow ? now : existingData!.windowStart,
+    // Increment the failure counter transactionally to avoid race conditions
+    await db.runTransaction(async (transaction) => {
+      const freshDoc = await transaction.get(attemptRef);
+      const freshNow = Date.now();
+      const existingData = freshDoc.exists ? (freshDoc.data() as { count: number; windowStart: number }) : null;
+      const isNewWindow = !existingData || freshNow - existingData.windowStart >= WINDOW_MS;
+
+      transaction.set(attemptRef, {
+        count: isNewWindow ? 1 : existingData.count + 1,
+        windowStart: isNewWindow ? freshNow : existingData.windowStart,
+      });
     });
     throw new HttpsError("permission-denied", "Invalid PIN.");
   }
