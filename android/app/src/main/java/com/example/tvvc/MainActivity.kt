@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
-import android.view.KeyEvent
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -91,12 +90,4 @@ class MainActivity : ComponentActivity() {
                 ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
-    // Pass TV remote keys (like D-Pad Center) to the WebView
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
-            // Can execute JS to simulate enter if needed, but WebView usually handles it
-            Log.d("TVVC", "D-PAD CENTER PRESSED")
-        }
-        return super.onKeyDown(keyCode, event)
-    }
 }
