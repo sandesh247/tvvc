@@ -4,7 +4,7 @@ import { httpsCallable } from 'firebase/functions';
 import type { User } from '../App';
 import { db, functions } from '../firebase';
 import {
-  collection, doc, setDoc, getDoc, onSnapshot, updateDoc,
+  collection, doc, getDoc, onSnapshot, updateDoc,
   addDoc, deleteDoc, getDocs, serverTimestamp, runTransaction
 } from 'firebase/firestore';
 
@@ -87,6 +87,89 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
     onEndCall();
   }, [callDoc, onEndCall]);
+
+  const answerCall = useCallback(async () => {
+    if (!pc.current) return;
+
+    const callSnapshot = await getDoc(callDoc);
+    let callData = callSnapshot.data();
+    if (!callData) {
+      console.warn('Call document does not exist.');
+      hangup();
+      return;
+    }
+
+    // Wait for the offer to be ready if caller is still generating it
+    if (!callData.offer) {
+      console.log('Offer is not ready yet, waiting for it to be created...');
+      callData = await new Promise((resolve) => {
+        const unsubscribe = onSnapshot(callDoc, (snapshot) => {
+          const data = snapshot.data();
+          if (data && data.offer) {
+            unsubscribe();
+            resolve(data);
+          } else if (!snapshot.exists()) {
+            unsubscribe();
+            resolve(null);
+          }
+        });
+        // Timeout after 10 seconds
+        setTimeout(() => {
+          unsubscribe();
+          resolve(null);
+        }, 10000);
+      }) as any;
+    }
+
+    if (!callData || !callData.offer) {
+      console.warn('Failed to obtain a valid call offer.');
+      hangup();
+      return;
+    }
+
+    setCallState('connected');
+
+    const offerCandidates = collection(callDoc, 'offerCandidates');
+    const answerCandidates = collection(callDoc, 'answerCandidates');
+
+    pc.current.onicecandidate = (event) => {
+      if (event.candidate) {
+        addDoc(answerCandidates, event.candidate.toJSON());
+      }
+    };
+
+    const offerDescription = callData.offer;
+    await pc.current.setRemoteDescription(new RTCSessionDescription(offerDescription));
+
+    const answerDescription = await pc.current.createAnswer();
+    await pc.current.setLocalDescription(answerDescription);
+
+    const answer = {
+      type: answerDescription.type,
+      sdp: answerDescription.sdp,
+    };
+
+    await updateDoc(callDoc, { answer, status: 'connected' });
+
+    const unsub = onSnapshot(offerCandidates, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const candidate = new RTCIceCandidate(change.doc.data());
+          pc.current?.addIceCandidate(candidate);
+        }
+      });
+    });
+    unsubscribes.current.push(unsub);
+
+    // Listen for call document deletion (caller hung up)
+    const unsubDoc = onSnapshot(callDoc, (snapshot) => {
+      if (!snapshot.exists()) {
+        console.log('Call ended by remote side.');
+        hangup();
+      }
+    });
+    unsubscribes.current.push(unsubDoc);
+  }, [callDoc, hangup]);
 
   const startCall = useCallback(async () => {
     if (!pc.current) return;
@@ -173,89 +256,6 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     });
     unsubscribes.current.push(unsub2);
   }, [callDoc, hangup, answerCall, currentUser.id, remoteUserId]);
-
-  const answerCall = useCallback(async () => {
-    if (!pc.current) return;
-
-    const callSnapshot = await getDoc(callDoc);
-    let callData = callSnapshot.data();
-    if (!callData) {
-      console.warn('Call document does not exist.');
-      hangup();
-      return;
-    }
-
-    // Wait for the offer to be ready if caller is still generating it
-    if (!callData.offer) {
-      console.log('Offer is not ready yet, waiting for it to be created...');
-      callData = await new Promise((resolve) => {
-        const unsubscribe = onSnapshot(callDoc, (snapshot) => {
-          const data = snapshot.data();
-          if (data && data.offer) {
-            unsubscribe();
-            resolve(data);
-          } else if (!snapshot.exists()) {
-            unsubscribe();
-            resolve(null);
-          }
-        });
-        // Timeout after 10 seconds
-        setTimeout(() => {
-          unsubscribe();
-          resolve(null);
-        }, 10000);
-      }) as any;
-    }
-
-    if (!callData || !callData.offer) {
-      console.warn('Failed to obtain a valid call offer.');
-      hangup();
-      return;
-    }
-
-    setCallState('connected');
-
-    const offerCandidates = collection(callDoc, 'offerCandidates');
-    const answerCandidates = collection(callDoc, 'answerCandidates');
-
-    pc.current.onicecandidate = (event) => {
-      if (event.candidate) {
-        addDoc(answerCandidates, event.candidate.toJSON());
-      }
-    };
-
-    const offerDescription = callData.offer;
-    await pc.current.setRemoteDescription(new RTCSessionDescription(offerDescription));
-
-    const answerDescription = await pc.current.createAnswer();
-    await pc.current.setLocalDescription(answerDescription);
-
-    const answer = {
-      type: answerDescription.type,
-      sdp: answerDescription.sdp,
-    };
-
-    await updateDoc(callDoc, { answer, status: 'connected' });
-
-    const unsub = onSnapshot(offerCandidates, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added') {
-          const candidate = new RTCIceCandidate(change.doc.data());
-          pc.current?.addIceCandidate(candidate);
-        }
-      });
-    });
-    unsubscribes.current.push(unsub);
-
-    // Listen for call document deletion (caller hung up)
-    const unsubDoc = onSnapshot(callDoc, (snapshot) => {
-      if (!snapshot.exists()) {
-        console.log('Call ended by remote side.');
-        hangup();
-      }
-    });
-    unsubscribes.current.push(unsubDoc);
-  }, [callDoc, hangup]);
 
 
   useEffect(() => {
