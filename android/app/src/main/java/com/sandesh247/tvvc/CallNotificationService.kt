@@ -8,10 +8,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.media.AudioAttributes
-import android.media.Ringtone
-import android.media.RingtoneManager
-import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -22,7 +18,6 @@ import com.google.firebase.firestore.ListenerRegistration
 
 class CallNotificationService : Service() {
 
-    private var ringtone: Ringtone? = null
     private var callListener: ListenerRegistration? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -94,22 +89,7 @@ class CallNotificationService : Service() {
             startForeground(101, notification)
         }
 
-        // 2. Play ringtone
-        try {
-            val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            ringtone = RingtoneManager.getRingtone(applicationContext, ringtoneUri)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                ringtone?.audioAttributes = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build()
-            }
-            ringtone?.play()
-        } catch (e: Exception) {
-            Log.e("TVVC", "Error playing ringtone", e)
-        }
-
-        // 3. Listen to Firestore call document cancellation
+        // 2. Listen to Firestore call document cancellation
         try {
             val app = FirebaseApp.getInstance()
             val db = FirebaseFirestore.getInstance(app, BuildConfig.FIRESTORE_DATABASE_ID)
@@ -121,6 +101,7 @@ class CallNotificationService : Service() {
                     }
                     if (snapshot == null || !snapshot.exists()) {
                         Log.d("TVVC", "Call document was deleted/cancelled. Stopping service.")
+                        notifyCallCancelled()
                         stopSelf()
                     }
                 }
@@ -131,13 +112,20 @@ class CallNotificationService : Service() {
         return START_NOT_STICKY
     }
 
+    private fun notifyCallCancelled() {
+        try {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                action = "CANCEL_CALL"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e("TVVC", "Failed to start MainActivity for CANCEL_CALL", e)
+        }
+    }
+
     override fun onDestroy() {
         Log.d("TVVC", "CallNotificationService onDestroy")
-        try {
-            ringtone?.stop()
-        } catch (e: Exception) {
-            Log.e("TVVC", "Error stopping ringtone", e)
-        }
         try {
             callListener?.remove()
         } catch (e: Exception) {

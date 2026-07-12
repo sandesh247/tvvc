@@ -117,6 +117,14 @@ class MainActivity : ComponentActivity() {
 
         Log.d("TVVC", "handleIntent: action=$action, callId=$callId, callerId=$callerId")
 
+        if (action == "CANCEL_CALL") {
+            Log.d("TVVC", "Received CANCEL_CALL action. Notifying web app.")
+            runOnUiThread {
+                webView.evaluateJavascript("if (window.onCallCancelledBySystem) { window.onCallCancelledBySystem(); }", null)
+            }
+            return
+        }
+
         if (action == "INCOMING_CALL" && !callId.isNullOrEmpty()) {
             val url = "${BuildConfig.WEB_APP_URL}?action=INCOMING_CALL&callId=${callId}&callerId=${callerId ?: ""}"
             Log.d("TVVC", "Loading intent URL: $url")

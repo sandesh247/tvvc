@@ -23,6 +23,7 @@ declare global {
       onIncomingCallReceived: (callId: string, callerId: string, callerName: string) => void;
       cancelIncomingCallNotification: () => void;
     };
+    onCallCancelledBySystem?: () => void;
   }
 }
 
