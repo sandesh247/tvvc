@@ -73,7 +73,8 @@ button:focus, input:focus, .contact-item:focus {
   width: 100%;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
   border-radius: 24px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .header {
@@ -91,7 +92,6 @@ button:focus, input:focus, .contact-item:focus {
 .content {
   flex: 1;
   padding: 28px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   background: transparent;

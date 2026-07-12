@@ -104,7 +104,7 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
   };
 
   return (
-    <div className="app-container">
+    <>
       <div className="header" style={{ justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <Tv style={{ marginRight: '16px' }} /> Contacts
@@ -144,14 +144,6 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
               <button
                 ref={editButtonRef}
                 onClick={() => setIsEditing(true)}
-                onKeyDown={(e) => {
-                  const key = e.key;
-                  const code = e.keyCode;
-                  if (key === 'ArrowDown' || key === 'Down' || code === 40 || key === 'ArrowLeft' || key === 'Left' || code === 37) {
-                    firstElementRef.current?.focus();
-                    e.preventDefault();
-                  }
-                }}
                 style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: '2px', display: 'flex' }}
                 autoFocus={users.length === 0}
               >
@@ -186,6 +178,6 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 }
