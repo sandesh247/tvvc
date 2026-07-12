@@ -105,8 +105,23 @@ button:focus, input:focus, .contact-item:focus {
 .contact-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
   background-color: #f0f2f5;
+}
+
+.contact-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.contact-group-header {
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: var(--wa-teal);
+  background-color: var(--wa-gray);
+  border-bottom: 1px solid #e1e4e6;
+  letter-spacing: 0.5px;
 }
 
 .contact-item {

@@ -35,6 +35,38 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
     setIsEditing(false);
   };
 
+  const onlineUsers = users
+    .filter(u => getStatus(u) === 'online')
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const offlineUsers = users
+    .filter(u => getStatus(u) === 'offline')
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const renderUserItem = (user: User) => {
+    const status = getStatus(user);
+    return (
+      <button
+        key={user.id}
+        className="contact-item"
+        onClick={() => onCallUser(user.id)}
+      >
+        <div className="contact-avatar">
+          <UserIcon size={32} />
+        </div>
+        <div className="contact-info">
+          <div className="contact-name">{user.name}</div>
+          <div className={`contact-status ${status}`}>
+            {status}
+          </div>
+        </div>
+        <div className="call-icon">
+          <Phone size={28} />
+        </div>
+      </button>
+    );
+  };
+
   return (
     <div className="app-container">
       <div className="header" style={{ justifyContent: 'space-between' }}>
@@ -78,29 +110,20 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
               No other TVs are online right now.
             </div>
           ) : (
-            users.map((user) => {
-              const status = getStatus(user);
-              return (
-                <button
-                  key={user.id}
-                  className="contact-item"
-                  onClick={() => onCallUser(user.id)}
-                >
-                  <div className="contact-avatar">
-                    <UserIcon size={32} />
-                  </div>
-                  <div className="contact-info">
-                    <div className="contact-name">{user.name}</div>
-                    <div className={`contact-status ${status}`}>
-                      {status}
-                    </div>
-                  </div>
-                  <div className="call-icon">
-                    <Phone size={28} />
-                  </div>
-                </button>
-              );
-            })
+            <>
+              {onlineUsers.length > 0 && (
+                <div className="contact-group">
+                  <div className="contact-group-header">Online</div>
+                  {onlineUsers.map(user => renderUserItem(user))}
+                </div>
+              )}
+              {offlineUsers.length > 0 && (
+                <div className="contact-group">
+                  <div className="contact-group-header">Offline</div>
+                  {offlineUsers.map(user => renderUserItem(user))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

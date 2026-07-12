@@ -30,9 +30,10 @@ export default function PinScreen({ onAuthenticated }: PinScreenProps) {
 
       await signInWithCustomToken(auth, token);
       onAuthenticated();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Authentication error:', err);
-      setError('Wrong PIN. Please try again.');
+      const message = err.message || 'Wrong PIN. Please try again.';
+      setError(message);
       setPin('');
       setLoading(false);
     }

@@ -16,7 +16,20 @@ interface CallScreenProps {
 }
 
 export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEndCall }: CallScreenProps) {
-  const [callState, setCallState] = useState<'ringing' | 'connected'>(isIncoming ? 'ringing' : 'connected');
+  const [callState, setCallState] = useState<'ringing' | 'connected'>('ringing');
+  const [remoteUserName, setRemoteUserName] = useState<string>('Unknown');
+
+  // Fetch the remote user's display name
+  useEffect(() => {
+    getDoc(doc(db, 'users', remoteUserId)).then((docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data && data.name) {
+          setRemoteUserName(data.name);
+        }
+      }
+    }).catch(err => console.error('Error fetching remote user profile:', err));
+  }, [remoteUserId]);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -205,15 +218,6 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     });
     unsubscribes.current.push(unsub);
 
-    // Listen for call document deletion (caller hung up)
-    const unsubDoc = onSnapshot(callDoc, (snapshot) => {
-      if (isCancelled.current) return;
-      if (!snapshot.exists()) {
-        console.log('Call ended by remote side.');
-        hangup();
-      }
-    });
-    unsubscribes.current.push(unsubDoc);
   }, [callDoc, hangup]);
 
   const startCall = useCallback(async () => {
@@ -296,6 +300,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       if (!pc.current?.currentRemoteDescription && data?.answer) {
         const answerDescription = new RTCSessionDescription(data.answer);
         pc.current?.setRemoteDescription(answerDescription);
+        setCallState('connected');
       }
     });
     unsubscribes.current.push(unsub1);
@@ -312,6 +317,19 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     });
     unsubscribes.current.push(unsub2);
   }, [callDoc, hangup, answerCall, currentUser.id, remoteUserId]);
+  // Listen for call deletion / cancellation immediately for incoming calls
+  useEffect(() => {
+    if (isIncoming) {
+      const unsubDoc = onSnapshot(callDoc, (snapshot) => {
+        if (isCancelled.current) return;
+        if (!snapshot.exists()) {
+          console.log('Incoming call cancelled by caller.');
+          hangup();
+        }
+      });
+      unsubscribes.current.push(unsubDoc);
+    }
+  }, [isIncoming, callDoc, hangup]);
 
 
   useEffect(() => {
@@ -390,13 +408,24 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
       {callState === 'ringing' && isIncoming && (
         <div className="incoming-overlay">
-          <div className="caller-name">Incoming Call...</div>
+          <div className="caller-name">Incoming Call from {remoteUserName}...</div>
           <div className="incoming-controls">
             <button className="control-btn end" onClick={hangup}>
               <PhoneOff size={40} />
             </button>
             <button className="control-btn answer" onClick={answerCall} autoFocus>
               <Phone size={40} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {callState === 'ringing' && !isIncoming && (
+        <div className="incoming-overlay">
+          <div className="caller-name">Calling {remoteUserName}...</div>
+          <div className="incoming-controls">
+            <button className="control-btn end" onClick={hangup} autoFocus>
+              <PhoneOff size={40} />
             </button>
           </div>
         </div>
