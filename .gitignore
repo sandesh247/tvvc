@@ -27,3 +27,4 @@ web/.env
 
 # Build artifacts
 functions/lib/
+.agents/
