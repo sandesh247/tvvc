@@ -93,16 +93,22 @@ class CallNotificationService : Service() {
         try {
             val app = FirebaseApp.getInstance()
             val db = FirebaseFirestore.getInstance(app, BuildConfig.FIRESTORE_DATABASE_ID)
+            var hasExisted = false
             callListener = db.collection("calls").document(callId)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         Log.e("TVVC", "Firestore listener error", error)
                         return@addSnapshotListener
                     }
-                    if (snapshot == null || !snapshot.exists()) {
-                        Log.d("TVVC", "Call document was deleted/cancelled. Stopping service.")
-                        notifyCallCancelled()
-                        stopSelf()
+                    if (snapshot != null && snapshot.exists()) {
+                        hasExisted = true
+                    } else if (snapshot != null && !snapshot.exists()) {
+                        val isFromCache = snapshot.metadata.isFromCache
+                        if (hasExisted && !isFromCache) {
+                            Log.d("TVVC", "Call document was deleted/cancelled. Stopping service.")
+                            notifyCallCancelled()
+                            stopSelf()
+                        }
                     }
                 }
         } catch (e: Exception) {
