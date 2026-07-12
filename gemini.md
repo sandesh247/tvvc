@@ -47,3 +47,27 @@ npm run build
 cd ..
 npx -y firebase-tools@latest deploy --only hosting
 ```
+
+---
+
+## Firestore Database & Admin Tasks Reference
+
+### 1. Database ID
+The Firestore database for this project is named `default`, not the standard `(default)`. When making API requests or using the admin SDK, always specify `"default"` as the database ID.
+
+### 2. Authentication (Access Token)
+To execute administrative REST API calls without needing a service account key file, read the active Firebase CLI OAuth access token from:
+`~/.config/configstore/firebase-tools.json` (specifically under `tokens.access_token`).
+
+### 3. List Registered Devices (Users)
+```bash
+curl -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  https://firestore.googleapis.com/v1/projects/gh-tvvc/databases/default/documents/users
+```
+
+### 4. Delete a Device
+```bash
+curl -X DELETE -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  https://firestore.googleapis.com/v1/projects/gh-tvvc/databases/default/documents/users/<DEVICE_ID>
+```
+
