@@ -1,0 +1,120 @@
+package com.sandesh247.tvvc
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.google.firebase.FirebaseApp
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
+
+class MyFirebaseMessagingService : FirebaseMessagingService() {
+
+    override fun onMessageReceived(remoteMessage: RemoteMessage) {
+        super.onMessageReceived(remoteMessage)
+        Log.d("TVVC", "From: ${remoteMessage.from}")
+
+        // Check if message contains a data payload.
+        if (remoteMessage.data.isNotEmpty()) {
+            Log.d("TVVC", "Message data payload: ${remoteMessage.data}")
+            val action = remoteMessage.data["action"]
+            val callId = remoteMessage.data["callId"]
+            val callerId = remoteMessage.data["callerId"]
+            val callerName = remoteMessage.data["callerName"] ?: "Unknown Caller"
+
+            if (action == "INCOMING_CALL" && !callId.isNullOrEmpty()) {
+                showIncomingCallNotification(action, callId, callerId, callerName)
+            } else {
+                launchApp()
+            }
+        }
+    }
+
+    private fun showIncomingCallNotification(action: String, callId: String, callerId: String?, callerName: String) {
+        val channelId = "incoming_calls"
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "Incoming Calls"
+            val descriptionText = "Notifications for incoming calls"
+            val importance = NotificationManager.IMPORTANCE_HIGH
+            val channel = NotificationChannel(channelId, name, importance).apply {
+                description = descriptionText
+                enableLights(true)
+                enableVibration(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val fullScreenIntent = Intent(this, MainActivity::class.java).apply {
+            setAction("INCOMING_CALL")
+            putExtra("callId", callId)
+            putExtra("callerId", callerId)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+
+        val flags = if (Build.VERSION.SDK_INT >= 23) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+
+        val fullScreenPendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            fullScreenIntent,
+            flags
+        )
+
+        val notificationBuilder = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(android.R.drawable.ic_menu_call)
+            .setContentTitle("Incoming Call")
+            .setContentText("Call from $callerName")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setFullScreenIntent(fullScreenPendingIntent, true)
+            .setContentIntent(fullScreenPendingIntent)
+            .setAutoCancel(true)
+
+        notificationManager.notify(101, notificationBuilder.build())
+    }
+
+    /**
+     * Called when the FCM registration token is refreshed (e.g. on token rotation or
+     * app reinstall). We must write the new token to Firestore so the Cloud Function
+     * can still deliver push-to-wake notifications.
+     */
+    override fun onNewToken(token: String) {
+        Log.d("TVVC", "Refreshed FCM token: $token")
+
+        val sharedPref = getSharedPreferences("TVVC_PREFS", Context.MODE_PRIVATE)
+        val uid = sharedPref.getString("auth_uid", null)
+
+        if (uid.isNullOrEmpty()) {
+            Log.w("TVVC", "Token refreshed but no cached auth_uid — token will be synced on next login.")
+            return
+        }
+
+        val app = FirebaseApp.getInstance()
+        FirebaseFirestore.getInstance(app, BuildConfig.FIRESTORE_DATABASE_ID)
+            .collection("users")
+            .document(uid)
+            .update("fcmToken", token)
+            .addOnSuccessListener { Log.d("TVVC", "FCM token updated in Firestore.") }
+            .addOnFailureListener { e -> Log.e("TVVC", "Failed to update FCM token in Firestore.", e) }
+    }
+
+    private fun launchApp() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        startActivity(intent)
+    }
+}

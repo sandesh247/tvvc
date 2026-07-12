@@ -12,13 +12,21 @@ val localProps = Properties().apply {
 android {
     namespace = "com.sandesh247.tvvc"
     compileSdk = 36
+
+    val envProps = Properties().apply {
+        file("../../web/.env").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+    }
+    val databaseId = envProps.getProperty("VITE_FIRESTORE_DATABASE_ID", "default")
+    val webAppUrl = envProps.getProperty("VITE_WEB_APP_URL", "https://gh-tvvc.web.app")
+
     defaultConfig {
         applicationId = "com.sandesh247.tvvc"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.0.3"
-        buildConfigField("String", "WEB_APP_URL", "\"https://gh-tvvc.web.app\"")
+        versionCode = 7
+        versionName = "1.0.6"
+        buildConfigField("String", "WEB_APP_URL", "\"$webAppUrl\"")
+        buildConfigField("String", "FIRESTORE_DATABASE_ID", "\"$databaseId\"")
     }
 
     signingConfigs {
@@ -78,8 +86,14 @@ dependencies {
 }
 
 tasks.register<Exec>("syncIcons") {
-    workingDir = projectDir.parentFile.parentFile
+    val repoRoot = projectDir.parentFile.parentFile
+    workingDir = repoRoot
     commandLine("node", "scripts/sync-icons.js")
+
+    // Declare inputs and outputs for up-to-date checking and caching
+    inputs.file(File(repoRoot, "web/public/favicon.svg"))
+    inputs.file(File(repoRoot, "scripts/sync-icons.js"))
+    outputs.file(File(repoRoot, "android/app/src/main/res/drawable/ic_launcher_foreground.xml"))
 }
 
 tasks.named("preBuild") {
