@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Build
 import android.util.Log
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -231,14 +232,39 @@ class MainActivity : ComponentActivity() {
         @android.webkit.JavascriptInterface
         fun onIncomingCallReceived(callId: String, callerId: String, callerName: String) {
             Log.d("TVVC", "onIncomingCallReceived via JS Bridge: callId=$callId, callerId=$callerId, callerName=$callerName")
-            MyFirebaseMessagingService.showIncomingCallNotification(this@MainActivity, callId, callerId, callerName)
+            
+            val serviceIntent = Intent(this@MainActivity, CallNotificationService::class.java).apply {
+                putExtra("callId", callId)
+                putExtra("callerId", callerId)
+                putExtra("callerName", callerName)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+
+            // Attempt to bring app to foreground
+            runOnUiThread {
+                try {
+                    val activityIntent = Intent(this@MainActivity, MainActivity::class.java).apply {
+                        action = "INCOMING_CALL"
+                        putExtra("callId", callId)
+                        putExtra("callerId", callerId)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    }
+                    startActivity(activityIntent)
+                } catch (e: Exception) {
+                    Log.e("TVVC", "Error trying to launch activity on call start", e)
+                }
+            }
         }
 
         @android.webkit.JavascriptInterface
         fun cancelIncomingCallNotification() {
             Log.d("TVVC", "cancelIncomingCallNotification via JS Bridge")
-            val notificationManager = getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-            notificationManager.cancel(101)
+            val intent = Intent(this@MainActivity, CallNotificationService::class.java)
+            stopService(intent)
         }
     }
 }

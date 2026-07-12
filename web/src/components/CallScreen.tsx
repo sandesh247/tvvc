@@ -69,7 +69,11 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
   useEffect(() => {
     let audio: HTMLAudioElement | null = null;
 
-    if (isIncoming && callState === 'ringing') {
+    // Only play the HTML5 ringtone if NOT running inside the native Android app container.
+    // In the native app, the native CallNotificationService manages the ringtone.
+    const isAndroidWrapper = !!window.AndroidBridge;
+
+    if (isIncoming && callState === 'ringing' && !isAndroidWrapper) {
       audio = new Audio('/ringtone.mp3');
       audio.loop = true;
       audio.play().catch((err) => {

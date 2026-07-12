@@ -29,7 +29,16 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             val callerName = remoteMessage.data["callerName"] ?: "Unknown Caller"
 
             if (action == "INCOMING_CALL" && !callId.isNullOrEmpty()) {
-                showIncomingCallNotification(this, callId, callerId, callerName)
+                val serviceIntent = Intent(this, CallNotificationService::class.java).apply {
+                    putExtra("callId", callId)
+                    putExtra("callerId", callerId)
+                    putExtra("callerName", callerName)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
             } else {
                 launchApp()
             }
