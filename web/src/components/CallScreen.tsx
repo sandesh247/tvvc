@@ -154,6 +154,9 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       console.log('Offer is not ready yet, waiting for it to be created...');
       callData = await new Promise((resolve) => {
         const unsubscribe = onSnapshot(callDoc, (snapshot) => {
+          // Ignore transient cache snapshot showing document does not exist (from previous deletion).
+          // Without this, the listener would resolve to null and abort the second call instantly.
+          if (snapshot.metadata.fromCache && !snapshot.exists()) return;
           const data = snapshot.data();
           if (data && data.offer) {
             unsubscribe();
@@ -291,6 +294,8 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     // Listen for remote answer
     const unsub1 = onSnapshot(callDoc, (snapshot) => {
       if (isCancelled.current) return;
+      // Ignore transient cache snapshot showing document does not exist (from previous deletion).
+      if (snapshot.metadata.fromCache && !snapshot.exists()) return;
       if (!snapshot.exists()) {
         console.log('Call ended by remote side.');
         hangup();
@@ -322,6 +327,8 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     if (isIncoming) {
       const unsubDoc = onSnapshot(callDoc, (snapshot) => {
         if (isCancelled.current) return;
+        // Ignore transient cache snapshot showing document does not exist (from previous deletion).
+        if (snapshot.metadata.fromCache && !snapshot.exists()) return;
         if (!snapshot.exists()) {
           console.log('Incoming call cancelled by caller.');
           hangup();
