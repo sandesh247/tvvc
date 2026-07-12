@@ -18,6 +18,14 @@ interface CallScreenProps {
 export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEndCall }: CallScreenProps) {
   const [callState, setCallState] = useState<'ringing' | 'connected'>('ringing');
   const [remoteUserName, setRemoteUserName] = useState<string>('Unknown');
+  const actionButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      actionButtonRef.current?.focus();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [callState, isIncoming]);
 
   // Fetch the remote user's display name
   useEffect(() => {
@@ -323,14 +331,18 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     if (isCancelled.current) return;
 
     // Listen for remote answer
+    let hasExisted = false;
     const unsub1 = onSnapshot(callDoc, (snapshot) => {
       if (isCancelled.current) return;
-      // Ignore transient cache snapshot showing document does not exist (from previous deletion).
-      if (snapshot.metadata.fromCache && !snapshot.exists()) return;
-      if (!snapshot.exists()) {
-        console.log('Call ended by remote side.');
-        hangup();
-        return;
+      if (snapshot.exists()) {
+        hasExisted = true;
+      } else {
+        // Only hang up if the document once existed and has now been deleted
+        if (hasExisted && !snapshot.metadata.fromCache) {
+          console.log('Call ended by remote side.');
+          hangup();
+          return;
+        }
       }
       const data = snapshot.data();
       if (!pc.current?.currentRemoteDescription && data?.answer) {
@@ -353,21 +365,27 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     });
     unsubscribes.current.push(unsub2);
   }, [callDoc, hangup, answerCall, currentUser.id, remoteUserId]);
+
   // Listen for call deletion / cancellation immediately for incoming calls
   useEffect(() => {
     if (isIncoming) {
+      let hasExisted = false;
       const unsubDoc = onSnapshot(callDoc, (snapshot) => {
         if (isCancelled.current) return;
-        // Ignore transient cache snapshot showing document does not exist (from previous deletion).
-        if (snapshot.metadata.fromCache && !snapshot.exists()) return;
-        if (!snapshot.exists()) {
-          console.log('Incoming call cancelled by caller.');
-          hangup();
+        if (snapshot.exists()) {
+          hasExisted = true;
+        } else {
+          // Only hang up if the document once existed and has now been deleted
+          if (hasExisted && !snapshot.metadata.fromCache) {
+            console.log('Incoming call cancelled by caller.');
+            hangup();
+          }
         }
       });
       unsubscribes.current.push(unsubDoc);
     }
   }, [isIncoming, callDoc, hangup]);
+
 
 
   useEffect(() => {
@@ -451,7 +469,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
             <button className="control-btn end" onClick={hangup}>
               <PhoneOff size={40} />
             </button>
-            <button className="control-btn answer" onClick={answerCall} autoFocus>
+            <button ref={actionButtonRef} className="control-btn answer" onClick={answerCall} autoFocus>
               <Phone size={40} />
             </button>
           </div>
@@ -462,7 +480,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
         <div className="incoming-overlay">
           <div className="caller-name">Calling {remoteUserName}...</div>
           <div className="incoming-controls">
-            <button className="control-btn end" onClick={hangup} autoFocus>
+            <button ref={actionButtonRef} className="control-btn end" onClick={hangup} autoFocus>
               <PhoneOff size={40} />
             </button>
           </div>
@@ -471,7 +489,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
       {callState === 'connected' && (
         <div className="call-controls">
-          <button className="control-btn end" onClick={hangup} autoFocus>
+          <button ref={actionButtonRef} className="control-btn end" onClick={hangup} autoFocus>
             <PhoneOff size={32} />
           </button>
         </div>

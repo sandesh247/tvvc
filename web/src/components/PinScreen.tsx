@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Tv } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import { signInWithCustomToken } from 'firebase/auth';
@@ -12,6 +12,14 @@ export default function PinScreen({ onAuthenticated }: PinScreenProps) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const firstKeyRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      firstKeyRef.current?.focus();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   const submitPin = useCallback(async (pinValue: string) => {
     setLoading(true);
@@ -20,7 +28,15 @@ export default function PinScreen({ onAuthenticated }: PinScreenProps) {
       // Generate or retrieve a stable device ID
       let deviceId = localStorage.getItem('tvvc_device_id');
       if (!deviceId) {
-        deviceId = crypto.randomUUID();
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+          deviceId = crypto.randomUUID();
+        } else {
+          // Fallback UUID generator for older WebViews
+          deviceId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+        }
         localStorage.setItem('tvvc_device_id', deviceId);
       }
 
@@ -109,6 +125,7 @@ export default function PinScreen({ onAuthenticated }: PinScreenProps) {
               return (
                 <button
                   key={i}
+                  ref={digit === '1' ? firstKeyRef : undefined}
                   className="pin-key"
                   onClick={() => handleDigit(digit)}
                   disabled={loading}

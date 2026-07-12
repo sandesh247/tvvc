@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Tv } from 'lucide-react';
 
 interface RegistrationProps {
@@ -7,6 +7,14 @@ interface RegistrationProps {
 
 export default function Registration({ onRegister }: RegistrationProps) {
   const [name, setName] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,6 +35,7 @@ export default function Registration({ onRegister }: RegistrationProps) {
             This is how others will see you in their contact list.
           </p>
           <input
+            ref={inputRef}
             type="text"
             className="registration-input"
             placeholder="e.g. Living Room TV"

@@ -23,8 +23,8 @@ android {
         applicationId = "com.sandesh247.tvvc"
         minSdk = 24
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.1.2"
+        versionCode = 18
+        versionName = "1.1.7"
         buildConfigField("String", "WEB_APP_URL", "\"$webAppUrl\"")
         buildConfigField("String", "FIRESTORE_DATABASE_ID", "\"$databaseId\"")
     }

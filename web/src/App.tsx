@@ -71,6 +71,20 @@ function App() {
     });
     return () => unsubscribe();
   }, [loadUserProfile]);
+  // Prevent any viewport-level scrolling (keeps the main container perfectly locked)
+  useEffect(() => {
+    const preventScroll = () => {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+    window.addEventListener('scroll', preventScroll);
+    document.body.addEventListener('scroll', preventScroll);
+    return () => {
+      window.removeEventListener('scroll', preventScroll);
+      document.body.removeEventListener('scroll', preventScroll);
+    };
+  }, []);
 
   // Expose global function for Android WebView FCM token injection.
   // window.setFcmToken is the only path needed; the WebView calls it

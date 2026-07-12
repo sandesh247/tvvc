@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { User as UserIcon, Phone, Tv, Edit2, Check, X } from 'lucide-react';
 import type { User } from '../App';
 
@@ -12,6 +12,9 @@ interface ContactListProps {
 export default function ContactList({ currentUser, users, onCallUser, onChangeName }: ContactListProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(currentUser.name);
+  const firstElementRef = useRef<HTMLButtonElement>(null);
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   // Force re-renders periodically to refresh relative online/offline states
   const [, setTick] = useState(0);
@@ -21,6 +24,26 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
     }, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (users.length === 0) {
+        editButtonRef.current?.focus();
+      } else {
+        firstElementRef.current?.focus();
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [users.length]);
+
+  useEffect(() => {
+    if (isEditing) {
+      const timer = setTimeout(() => {
+        editInputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isEditing]);
 
   const getStatus = (user: User): 'online' | 'offline' => {
     if (!user.lastSeen) return 'offline';
@@ -33,29 +56,42 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
       onChangeName(editName.trim());
     }
     setIsEditing(false);
+    setTimeout(() => {
+      editButtonRef.current?.focus();
+    }, 100);
   };
 
   const onlineUsers = users
     .filter(u => getStatus(u) === 'online')
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => {
+      const nameA = a.name || '';
+      const nameB = b.name || '';
+      return nameA < nameB ? -1 : nameA > nameB ? 1 : 0;
+    });
 
   const offlineUsers = users
     .filter(u => getStatus(u) === 'offline')
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => {
+      const nameA = a.name || '';
+      const nameB = b.name || '';
+      return nameA < nameB ? -1 : nameA > nameB ? 1 : 0;
+    });
 
-  const renderUserItem = (user: User) => {
+  const renderUserItem = (user: User, isFirst: boolean) => {
     const status = getStatus(user);
     return (
       <button
         key={user.id}
+        ref={isFirst ? firstElementRef : undefined}
         className="contact-item"
         onClick={() => onCallUser(user.id)}
+        autoFocus={isFirst}
       >
         <div className="contact-avatar">
           <UserIcon size={32} />
         </div>
         <div className="contact-info">
-          <div className="contact-name">{user.name}</div>
+          <div className="contact-name">{user.name || 'Unnamed Device'}</div>
           <div className={`contact-status ${status}`}>
             {status}
           </div>
@@ -78,6 +114,7 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
           {isEditing ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <input 
+                ref={editInputRef}
                 type="text" 
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
@@ -88,14 +125,36 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
               <button onClick={handleSaveName} style={{ background: 'none', border: 'none', color: 'var(--wa-green)', cursor: 'pointer', padding: '2px' }}>
                 <Check size={16} />
               </button>
-              <button onClick={() => { setIsEditing(false); setEditName(currentUser.name); }} style={{ background: 'none', border: 'none', color: 'var(--wa-red)', cursor: 'pointer', padding: '2px' }}>
+              <button 
+                onClick={() => { 
+                  setIsEditing(false); 
+                  setEditName(currentUser.name); 
+                  setTimeout(() => {
+                    editButtonRef.current?.focus();
+                  }, 100);
+                }} 
+                style={{ background: 'none', border: 'none', color: 'var(--wa-red)', cursor: 'pointer', padding: '2px' }}
+              >
                 <X size={16} />
               </button>
             </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <strong>{currentUser.name}</strong>
-              <button onClick={() => setIsEditing(true)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: '2px', display: 'flex' }}>
+              <button
+                ref={editButtonRef}
+                onClick={() => setIsEditing(true)}
+                onKeyDown={(e) => {
+                  const key = e.key;
+                  const code = e.keyCode;
+                  if (key === 'ArrowDown' || key === 'Down' || code === 40 || key === 'ArrowLeft' || key === 'Left' || code === 37) {
+                    firstElementRef.current?.focus();
+                    e.preventDefault();
+                  }
+                }}
+                style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: '2px', display: 'flex' }}
+                autoFocus={users.length === 0}
+              >
                 <Edit2 size={14} />
               </button>
             </div>
@@ -114,13 +173,13 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
               {onlineUsers.length > 0 && (
                 <div className="contact-group">
                   <div className="contact-group-header">Online</div>
-                  {onlineUsers.map(user => renderUserItem(user))}
+                  {onlineUsers.map((user, i) => renderUserItem(user, i === 0))}
                 </div>
               )}
               {offlineUsers.length > 0 && (
                 <div className="contact-group">
                   <div className="contact-group-header">Offline</div>
-                  {offlineUsers.map(user => renderUserItem(user))}
+                  {offlineUsers.map((user, i) => renderUserItem(user, onlineUsers.length === 0 && i === 0))}
                 </div>
               )}
             </>

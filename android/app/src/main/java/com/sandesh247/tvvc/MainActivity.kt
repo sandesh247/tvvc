@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
         setContentView(webView)
 
         webView.isFocusable = true
-        webView.isFocusableInTouchMode = true
+        webView.isFocusableInTouchMode = false
         webView.post {
             webView.requestFocus()
         }
@@ -57,6 +57,8 @@ class MainActivity : ComponentActivity() {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
+            useWideViewPort = false
+            loadWithOverviewMode = false
             mediaPlaybackRequiresUserGesture = false
         }
 
@@ -68,6 +70,9 @@ class MainActivity : ComponentActivity() {
                 super.onPageFinished(view, url)
                 isPageLoaded = true
                 injectJsBridgeHelpers()
+                view?.post {
+                    view.requestFocus()
+                }
             }
         }
 
@@ -128,9 +133,13 @@ class MainActivity : ComponentActivity() {
         }
 
         if (action == "INCOMING_CALL" && !callId.isNullOrEmpty()) {
-            val url = "${BuildConfig.WEB_APP_URL}?action=INCOMING_CALL&callId=${callId}&callerId=${callerId ?: ""}"
-            Log.d("TVVC", "Loading intent URL: $url")
-            webView.loadUrl(url)
+            if (!isPageLoaded) {
+                val url = "${BuildConfig.WEB_APP_URL}?action=INCOMING_CALL&callId=${callId}&callerId=${callerId ?: ""}"
+                Log.d("TVVC", "Loading intent URL: $url")
+                webView.loadUrl(url)
+            } else {
+                Log.d("TVVC", "Page already loaded, ignoring incoming call intent load.")
+            }
         } else {
             if (!isPageLoaded) {
                 Log.d("TVVC", "Loading default URL: ${BuildConfig.WEB_APP_URL}")
