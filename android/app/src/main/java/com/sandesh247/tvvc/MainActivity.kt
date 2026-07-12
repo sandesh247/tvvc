@@ -107,7 +107,9 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         if (intent == null) {
-            webView.loadUrl(BuildConfig.WEB_APP_URL)
+            if (!isPageLoaded) {
+                webView.loadUrl(BuildConfig.WEB_APP_URL)
+            }
             return
         }
 
@@ -130,8 +132,12 @@ class MainActivity : ComponentActivity() {
             Log.d("TVVC", "Loading intent URL: $url")
             webView.loadUrl(url)
         } else {
-            Log.d("TVVC", "Loading default URL: ${BuildConfig.WEB_APP_URL}")
-            webView.loadUrl(BuildConfig.WEB_APP_URL)
+            if (!isPageLoaded) {
+                Log.d("TVVC", "Loading default URL: ${BuildConfig.WEB_APP_URL}")
+                webView.loadUrl(BuildConfig.WEB_APP_URL)
+            } else {
+                Log.d("TVVC", "Page already loaded, ignoring default launcher intent.")
+            }
         }
     }
 
