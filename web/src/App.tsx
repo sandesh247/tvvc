@@ -17,6 +17,12 @@ export interface User {
 declare global {
   interface Window {
     setFcmToken?: (token: string) => void;
+    AndroidBridge?: {
+      getFcmToken: () => string | null;
+      syncUid: (uid: string | null) => void;
+      onIncomingCallReceived: (callId: string, callerId: string, callerName: string) => void;
+      cancelIncomingCallNotification: () => void;
+    };
   }
 }
 

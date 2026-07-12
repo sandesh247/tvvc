@@ -227,5 +227,18 @@ class MainActivity : ComponentActivity() {
         fun getFcmToken(): String? {
             return fcmToken
         }
+
+        @android.webkit.JavascriptInterface
+        fun onIncomingCallReceived(callId: String, callerId: String, callerName: String) {
+            Log.d("TVVC", "onIncomingCallReceived via JS Bridge: callId=$callId, callerId=$callerId, callerName=$callerName")
+            MyFirebaseMessagingService.showIncomingCallNotification(this@MainActivity, callId, callerId, callerName)
+        }
+
+        @android.webkit.JavascriptInterface
+        fun cancelIncomingCallNotification() {
+            Log.d("TVVC", "cancelIncomingCallNotification via JS Bridge")
+            val notificationManager = getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            notificationManager.cancel(101)
+        }
     }
 }

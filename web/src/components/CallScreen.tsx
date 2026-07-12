@@ -45,6 +45,26 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
   // Memoize the Firestore document reference — it never changes for the life of this call.
   const callDoc = useMemo(() => doc(db, 'calls', callDocId), [callDocId]);
 
+  // Sync calling notifications to the native Android app container
+  useEffect(() => {
+    if (isIncoming) {
+      if (callState === 'ringing') {
+        if (window.AndroidBridge?.onIncomingCallReceived) {
+          window.AndroidBridge.onIncomingCallReceived(callDocId, remoteUserId, remoteUserName);
+        }
+      } else {
+        if (window.AndroidBridge?.cancelIncomingCallNotification) {
+          window.AndroidBridge.cancelIncomingCallNotification();
+        }
+      }
+    }
+    return () => {
+      if (window.AndroidBridge?.cancelIncomingCallNotification) {
+        window.AndroidBridge.cancelIncomingCallNotification();
+      }
+    };
+  }, [isIncoming, callDocId, remoteUserId, remoteUserName, callState]);
+
   // Play ringtone for incoming calls
   useEffect(() => {
     let audio: HTMLAudioElement | null = null;

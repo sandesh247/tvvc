@@ -83,6 +83,20 @@ export const onCallCreated = onDocumentCreated({
 
   console.log(`New call initiated from ${callerId} to ${calleeId}`);
 
+  // Fetch caller's display name
+  let callerName = "Unknown Caller";
+  try {
+    const callerDoc = await db.collection("users").doc(callerId).get();
+    if (callerDoc.exists) {
+      const callerData = callerDoc.data();
+      if (callerData && callerData.name) {
+        callerName = callerData.name;
+      }
+    }
+  } catch (error) {
+    console.error("Error fetching caller profile:", error);
+  }
+
   const userDoc = await db.collection("users").doc(calleeId).get();
   if (!userDoc.exists) {
     console.log(`User ${calleeId} not found`);
@@ -105,6 +119,7 @@ export const onCallCreated = onDocumentCreated({
       action: "INCOMING_CALL",
       callId: callId,
       callerId: callerId,
+      callerName: callerName,
     },
     android: {
       priority: "high" as const,

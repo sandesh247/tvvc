@@ -29,61 +29,63 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             val callerName = remoteMessage.data["callerName"] ?: "Unknown Caller"
 
             if (action == "INCOMING_CALL" && !callId.isNullOrEmpty()) {
-                showIncomingCallNotification(action, callId, callerId, callerName)
+                showIncomingCallNotification(this, callId, callerId, callerName)
             } else {
                 launchApp()
             }
         }
     }
 
-    private fun showIncomingCallNotification(action: String, callId: String, callerId: String?, callerName: String) {
-        val channelId = "incoming_calls"
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    companion object {
+        fun showIncomingCallNotification(context: Context, callId: String, callerId: String?, callerName: String) {
+            val channelId = "incoming_calls"
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "Incoming Calls"
-            val descriptionText = "Notifications for incoming calls"
-            val importance = NotificationManager.IMPORTANCE_HIGH
-            val channel = NotificationChannel(channelId, name, importance).apply {
-                description = descriptionText
-                enableLights(true)
-                enableVibration(true)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val name = "Incoming Calls"
+                val descriptionText = "Notifications for incoming calls"
+                val importance = NotificationManager.IMPORTANCE_HIGH
+                val channel = NotificationChannel(channelId, name, importance).apply {
+                    description = descriptionText
+                    enableLights(true)
+                    enableVibration(true)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                }
+                notificationManager.createNotificationChannel(channel)
             }
-            notificationManager.createNotificationChannel(channel)
+
+            val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
+                setAction("INCOMING_CALL")
+                putExtra("callId", callId)
+                putExtra("callerId", callerId)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+
+            val flags = if (Build.VERSION.SDK_INT >= 23) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+
+            val fullScreenPendingIntent = PendingIntent.getActivity(
+                context,
+                0,
+                fullScreenIntent,
+                flags
+            )
+
+            val notificationBuilder = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle("Incoming Call")
+                .setContentText("Call from $callerName")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setFullScreenIntent(fullScreenPendingIntent, true)
+                .setContentIntent(fullScreenPendingIntent)
+                .setAutoCancel(true)
+
+            notificationManager.notify(101, notificationBuilder.build())
         }
-
-        val fullScreenIntent = Intent(this, MainActivity::class.java).apply {
-            setAction("INCOMING_CALL")
-            putExtra("callId", callId)
-            putExtra("callerId", callerId)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-
-        val flags = if (Build.VERSION.SDK_INT >= 23) {
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        } else {
-            PendingIntent.FLAG_UPDATE_CURRENT
-        }
-
-        val fullScreenPendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            fullScreenIntent,
-            flags
-        )
-
-        val notificationBuilder = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.ic_menu_call)
-            .setContentTitle("Incoming Call")
-            .setContentText("Call from $callerName")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(fullScreenPendingIntent, true)
-            .setContentIntent(fullScreenPendingIntent)
-            .setAutoCancel(true)
-
-        notificationManager.notify(101, notificationBuilder.build())
     }
 
     /**
