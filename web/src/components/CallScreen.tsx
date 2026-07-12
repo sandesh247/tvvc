@@ -25,6 +25,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
   const remoteStream = useRef<MediaStream | null>(null);
   const unsubscribes = useRef<(() => void)[]>([]);
   const isHangingUp = useRef(false);
+  const isCancelled = useRef(false);
 
   const callDocId = currentUser.id < remoteUserId ? `${currentUser.id}_${remoteUserId}` : `${remoteUserId}_${currentUser.id}`;
 
@@ -61,9 +62,21 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
     if (pc.current) {
       pc.current.close();
+      pc.current = null;
     }
     if (localStream.current) {
       localStream.current.getTracks().forEach(track => track.stop());
+      localStream.current = null;
+    }
+    if (remoteStream.current) {
+      remoteStream.current.getTracks().forEach(track => track.stop());
+      remoteStream.current = null;
+    }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
     }
 
     // Clean up the call document and its ICE candidate subcollections.
@@ -90,8 +103,32 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
   const answerCall = useCallback(async () => {
     if (!pc.current) return;
+    if (isCancelled.current) return;
+
+    // Fix callee camera privacy leak: only request media stream and add tracks on explicit accept
+    if (!localStream.current) {
+      try {
+        localStream.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        if (isCancelled.current) {
+          localStream.current.getTracks().forEach(track => track.stop());
+          localStream.current = null;
+          return;
+        }
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = localStream.current;
+        }
+
+        localStream.current.getTracks().forEach((track) => {
+          pc.current?.addTrack(track, localStream.current!);
+        });
+      } catch (err) {
+        if (isCancelled.current) return;
+        console.error('Failed to get local stream', err);
+      }
+    }
 
     const callSnapshot = await getDoc(callDoc);
+    if (isCancelled.current) return;
     let callData = callSnapshot.data();
     if (!callData) {
       console.warn('Call document does not exist.');
@@ -119,6 +156,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
           resolve(null);
         }, 10000);
       }) as any;
+      if (isCancelled.current) return;
     }
 
     if (!callData || !callData.offer) {
@@ -133,6 +171,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     const answerCandidates = collection(callDoc, 'answerCandidates');
 
     pc.current.onicecandidate = (event) => {
+      if (isCancelled.current) return;
       if (event.candidate) {
         addDoc(answerCandidates, event.candidate.toJSON());
       }
@@ -140,9 +179,12 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
     const offerDescription = callData.offer;
     await pc.current.setRemoteDescription(new RTCSessionDescription(offerDescription));
+    if (isCancelled.current) return;
 
     const answerDescription = await pc.current.createAnswer();
+    if (isCancelled.current) return;
     await pc.current.setLocalDescription(answerDescription);
+    if (isCancelled.current) return;
 
     const answer = {
       type: answerDescription.type,
@@ -150,8 +192,10 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     };
 
     await updateDoc(callDoc, { answer, status: 'connected' });
+    if (isCancelled.current) return;
 
     const unsub = onSnapshot(offerCandidates, (snapshot) => {
+      if (isCancelled.current) return;
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const candidate = new RTCIceCandidate(change.doc.data());
@@ -163,6 +207,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
     // Listen for call document deletion (caller hung up)
     const unsubDoc = onSnapshot(callDoc, (snapshot) => {
+      if (isCancelled.current) return;
       if (!snapshot.exists()) {
         console.log('Call ended by remote side.');
         hangup();
@@ -173,6 +218,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
   const startCall = useCallback(async () => {
     if (!pc.current) return;
+    if (isCancelled.current) return;
     const offerCandidates = collection(callDoc, 'offerCandidates');
     const answerCandidates = collection(callDoc, 'answerCandidates');
 
@@ -183,9 +229,9 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
         const docSnapshot = await transaction.get(callDoc);
         if (docSnapshot.exists()) {
           const data = docSnapshot.data();
-          // Filter stale calls: ignore if document is older than 30 seconds
+          // Filter stale calls: ignore if document is older than 120 seconds
           const createdAt = data?.createdAt?.toDate?.();
-          const isStale = createdAt && (Date.now() - createdAt.getTime() > 30000);
+          const isStale = createdAt && (Date.now() - createdAt.getTime() > 120000);
 
           if (!isStale && data && data.callerId === remoteUserId) {
             // The other user called us first. We should act as the callee.
@@ -204,7 +250,11 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       });
     } catch (e) {
       console.error('Transaction failed while starting call:', e);
+      hangup();
+      return;
     }
+
+    if (isCancelled.current) return;
 
     if (callDataToAnswer) {
       console.log('Mutual call detected: remote user called first. Answering their call instead.');
@@ -214,6 +264,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
     // Get candidates for caller, save to db
     pc.current.onicecandidate = (event) => {
+      if (isCancelled.current) return;
       if (event.candidate) {
         addDoc(offerCandidates, event.candidate.toJSON());
       }
@@ -221,7 +272,9 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
     // Create offer
     const offerDescription = await pc.current.createOffer();
+    if (isCancelled.current) return;
     await pc.current.setLocalDescription(offerDescription);
+    if (isCancelled.current) return;
 
     const offer = {
       sdp: offerDescription.sdp,
@@ -229,9 +282,11 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     };
 
     await updateDoc(callDoc, { offer, status: 'ringing' });
+    if (isCancelled.current) return;
 
     // Listen for remote answer
     const unsub1 = onSnapshot(callDoc, (snapshot) => {
+      if (isCancelled.current) return;
       if (!snapshot.exists()) {
         console.log('Call ended by remote side.');
         hangup();
@@ -247,6 +302,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
     // Listen for remote ICE candidates
     const unsub2 = onSnapshot(answerCandidates, (snapshot) => {
+      if (isCancelled.current) return;
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const candidate = new RTCIceCandidate(change.doc.data());
@@ -259,6 +315,8 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
 
   useEffect(() => {
+    isCancelled.current = false;
+
     const setupWebRTC = async () => {
       // Fetch TURN credentials from Cloud Function
       let iceServers: RTCIceServer[] = [
@@ -268,16 +326,16 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       try {
         const getTurnCreds = httpsCallable(functions, 'getTurnCredentials');
         const result = await getTurnCreds();
+        if (isCancelled.current) return;
         const data = result.data as { iceServers: RTCIceServer[] };
         if (data.iceServers) {
           iceServers = data.iceServers;
         }
       } catch (err) {
+        if (isCancelled.current) return;
         console.warn('Failed to fetch TURN credentials, using STUN only:', err);
       }
 
-      // iceCandidatePoolSize: 2 is plenty for a home LAN; the default tutorial
-      // value of 10 generates unnecessary STUN traffic.
       pc.current = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 2 });
 
       // Setup media streams
@@ -286,33 +344,41 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
         remoteVideoRef.current.srcObject = remoteStream.current;
       }
 
-      try {
-        localStream.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = localStream.current;
-        }
-
-        localStream.current.getTracks().forEach((track) => {
-          pc.current?.addTrack(track, localStream.current!);
-        });
-      } catch (err) {
-        console.error('Failed to get local stream', err);
-      }
-
       pc.current.ontrack = (event) => {
+        if (isCancelled.current) return;
         event.streams[0].getTracks().forEach((track) => {
           remoteStream.current?.addTrack(track);
         });
       };
 
       if (!isIncoming) {
-        startCall();
+        try {
+          localStream.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          if (isCancelled.current) {
+            localStream.current.getTracks().forEach(track => track.stop());
+            localStream.current = null;
+            return;
+          }
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = localStream.current;
+          }
+
+          localStream.current.getTracks().forEach((track) => {
+            pc.current?.addTrack(track, localStream.current!);
+          });
+        } catch (err) {
+          if (isCancelled.current) return;
+          console.error('Failed to get local stream', err);
+        }
+
+        await startCall();
       }
     };
 
     setupWebRTC();
 
     return () => {
+      isCancelled.current = true;
       hangup();
     };
   }, [isIncoming, startCall, hangup]);

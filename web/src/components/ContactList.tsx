@@ -25,7 +25,7 @@ export default function ContactList({ currentUser, users, onCallUser, onChangeNa
   const getStatus = (user: User): 'online' | 'offline' => {
     if (!user.lastSeen) return 'offline';
     const lastSeenMs = user.lastSeen.toDate ? user.lastSeen.toDate().getTime() : new Date(user.lastSeen).getTime();
-    return (Date.now() - lastSeenMs) < 90000 ? 'online' : 'offline';
+    return (Date.now() - lastSeenMs) < 180000 ? 'online' : 'offline';
   };
 
   const handleSaveName = () => {

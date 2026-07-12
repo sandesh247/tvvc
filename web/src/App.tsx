@@ -26,29 +26,44 @@ function App() {
   const [fcmToken, setFcmTokenState] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [activeCall, setActiveCall] = useState<{ remoteUserId: string; incoming: boolean } | null>(null);
+  const [profileLoading, setProfileLoading] = useState<boolean>(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  // Helper to load user profile from Firestore
+  const loadUserProfile = useCallback(async (uid: string) => {
+    setProfileLoading(true);
+    setProfileError(null);
+    try {
+      const userDoc = await getDoc(doc(db, 'users', uid));
+      if (userDoc.exists()) {
+        setCurrentUser({ id: uid, ...userDoc.data() } as User);
+      } else {
+        setCurrentUser(null);
+      }
+    } catch (e: any) {
+      console.error('Error loading user profile:', e);
+      setProfileError(e.message || 'Failed to load user profile. Please check your connection and try again.');
+    } finally {
+      setProfileLoading(false);
+    }
+  }, []);
 
   // Listen for Firebase Auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         // User is authenticated — check if they have a Firestore profile
-        try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-          if (userDoc.exists()) {
-            setCurrentUser({ id: firebaseUser.uid, ...userDoc.data() } as User);
-          }
-          // If no profile exists, currentUser stays null → Registration screen shows
-        } catch (e) {
-          console.error('Error loading user profile:', e);
-        }
+        await loadUserProfile(firebaseUser.uid);
         setAuthState('authenticated');
       } else {
         setCurrentUser(null);
         setAuthState('unauthenticated');
+        setProfileError(null);
+        setProfileLoading(false);
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [loadUserProfile]);
 
   // Expose global function for Android WebView FCM token injection.
   // window.setFcmToken is the only path needed; the WebView calls it
@@ -148,11 +163,11 @@ function App() {
           const callData = change.doc.data();
           const callerId = callData.callerId;
 
-          // Filter stale calls — ignore documents older than 30 seconds
+          // Filter stale calls — ignore documents older than 120 seconds if timestamp exists.
+          // If the timestamp doesn't exist yet (e.g. pending server sync), we assume it is
+          // a new call and do not filter it out.
           const createdAt = callData.createdAt?.toDate?.();
-          if (createdAt && Date.now() - createdAt.getTime() > 30000) return;
-          // Also ignore calls with no timestamp (shouldn't happen, but be safe)
-          if (!callData.createdAt) return;
+          if (createdAt && Date.now() - createdAt.getTime() > 120000) return;
 
           if (callerId) {
             handleIncomingCall(callerId);
@@ -203,8 +218,11 @@ function App() {
     setActiveCall(null);
   }, []);
 
-  // Loading state while Firebase Auth initializes
-  if (authState === 'loading') {
+  // Determine if the app is currently loading (auth initialization or profile fetching)
+  const isAppLoading = authState === 'loading' || profileLoading;
+
+  // Loading state while Firebase Auth initializes or profile is loading
+  if (isAppLoading) {
     return (
       <div className="app-container">
         <div className="content" style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -216,7 +234,35 @@ function App() {
 
   // Not authenticated — show PIN screen
   if (authState === 'unauthenticated') {
-    return <PinScreen onAuthenticated={() => setAuthState('authenticated')} />;
+    return <PinScreen onAuthenticated={() => {}} />;
+  }
+
+  // Error loading profile — show Error screen with Retry option
+  if (profileError) {
+    return (
+      <div className="app-container">
+        <div className="content">
+          <div className="registration-container" style={{ textAlign: 'center' }}>
+            <h2 style={{ color: 'var(--wa-red)', fontSize: '32px', margin: 0 }}>Error Loading Profile</h2>
+            <p style={{ color: 'var(--wa-text-light)', fontSize: '20px', maxWidth: '480px', margin: '0 auto', marginTop: '16px' }}>
+              {profileError}
+            </p>
+            <button
+              className="btn"
+              style={{ marginTop: '24px' }}
+              onClick={() => {
+                const firebaseUser = auth.currentUser;
+                if (firebaseUser) {
+                  loadUserProfile(firebaseUser.uid);
+                }
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // Authenticated but no profile — show Registration
