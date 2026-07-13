@@ -50,7 +50,6 @@ class MainActivity : ComponentActivity() {
         setContentView(webView)
 
         webView.isFocusable = true
-        webView.isFocusableInTouchMode = false
         webView.post {
             webView.requestFocus()
         }
