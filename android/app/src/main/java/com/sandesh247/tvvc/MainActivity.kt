@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
         }
 
         webView = WebView(this)
+        webView.fitsSystemWindows = true
         setContentView(webView)
 
         webView.isFocusable = true
