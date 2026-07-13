@@ -23,6 +23,12 @@ class CallNotificationService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "CANCEL_CALL") {
+            Log.d("TVVC", "CallNotificationService: Received CANCEL_CALL. Stopping service.")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         val callId = intent?.getStringExtra("callId")
         val callerId = intent?.getStringExtra("callerId")
         val callerName = intent?.getStringExtra("callerName") ?: "Unknown Caller"
@@ -106,7 +112,6 @@ class CallNotificationService : Service() {
                         val isFromCache = snapshot.metadata.isFromCache
                         if (hasExisted && !isFromCache) {
                             Log.d("TVVC", "Call document was deleted/cancelled. Stopping service.")
-                            notifyCallCancelled()
                             stopSelf()
                         }
                     }
@@ -118,17 +123,6 @@ class CallNotificationService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun notifyCallCancelled() {
-        try {
-            val intent = Intent(this, MainActivity::class.java).apply {
-                action = "CANCEL_CALL"
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(intent)
-        } catch (e: Exception) {
-            Log.e("TVVC", "Failed to start MainActivity for CANCEL_CALL", e)
-        }
-    }
 
     override fun onDestroy() {
         Log.d("TVVC", "CallNotificationService onDestroy")

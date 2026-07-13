@@ -34,10 +34,22 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                     putExtra("callerId", callerId)
                     putExtra("callerName", callerName)
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent)
-                } else {
-                    startService(serviceIntent)
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(serviceIntent)
+                    } else {
+                        startService(serviceIntent)
+                    }
+                } catch (e: Exception) {
+                    Log.e("TVVC", "Failed to start foreground service for incoming call", e)
+                }
+            } else if (action == "CANCEL_CALL") {
+                Log.d("TVVC", "FCM received CANCEL_CALL action. Stopping service.")
+                try {
+                    val serviceIntent = Intent(this, CallNotificationService::class.java)
+                    stopService(serviceIntent)
+                } catch (e: Exception) {
+                    Log.e("TVVC", "Failed to stop service on CANCEL_CALL", e)
                 }
             } else {
                 launchApp()
@@ -117,9 +129,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         FirebaseFirestore.getInstance(app, BuildConfig.FIRESTORE_DATABASE_ID)
             .collection("users")
             .document(uid)
-            .update("fcmToken", token)
-            .addOnSuccessListener { Log.d("TVVC", "FCM token updated in Firestore.") }
-            .addOnFailureListener { e -> Log.e("TVVC", "Failed to update FCM token in Firestore.", e) }
+            .collection("private")
+            .document("secrets")
+            .set(mapOf("fcmToken" to token), com.google.firebase.firestore.SetOptions.merge())
+            .addOnSuccessListener { Log.d("TVVC", "FCM token updated in Firestore private secrets.") }
+            .addOnFailureListener { e -> Log.e("TVVC", "Failed to update FCM token in Firestore private secrets.", e) }
     }
 
     private fun launchApp() {

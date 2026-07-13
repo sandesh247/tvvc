@@ -16,6 +16,7 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
@@ -32,6 +33,8 @@
             android:launchMode="singleInstance"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
+            android:supportsPictureInPicture="true"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

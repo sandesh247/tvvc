@@ -23,6 +23,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private var fcmToken: String? = null
     private var isPageLoaded = false
+    private var isCallActive = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,13 +64,13 @@ class MainActivity : ComponentActivity() {
         }
 
         // Register the JS bridge
-        webView.addJavascriptInterface(AndroidBridge(), "AndroidBridge")
+        webView.addJavascriptInterface(AndroidBridge(this), "AndroidBridge")
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 isPageLoaded = true
-                injectJsBridgeHelpers()
+                injectTokenIfAvailable()
                 view?.post {
                     view.requestFocus()
                 }
@@ -138,7 +139,13 @@ class MainActivity : ComponentActivity() {
                 Log.d("TVVC", "Loading intent URL: $url")
                 webView.loadUrl(url)
             } else {
-                Log.d("TVVC", "Page already loaded, ignoring incoming call intent load.")
+                Log.d("TVVC", "Page already loaded, evaluating handleIncomingCallIntent via JS.")
+                runOnUiThread {
+                    webView.evaluateJavascript(
+                        "if (window.handleIncomingCallIntent) { window.handleIncomingCallIntent('$callId', '${callerId ?: ""}'); }",
+                        null
+                    )
+                }
             }
         } else {
             if (!isPageLoaded) {
@@ -154,90 +161,21 @@ class MainActivity : ComponentActivity() {
         val token = fcmToken ?: return
         if (isPageLoaded) {
             val js = """
-                if (window.setFcmToken) {
-                    window.setFcmToken('$token');
+                if (window.handleFcmToken) {
+                    window.handleFcmToken('$token');
                 }
             """.trimIndent()
             webView.evaluateJavascript(js, null)
         }
     }
 
-    private fun injectJsBridgeHelpers() {
-        val js = """
-            (function() {
-                var tokenInterval = setInterval(function() {
-                    if (window.AndroidBridge && typeof window.setFcmToken === 'function') {
-                        var token = window.AndroidBridge.getFcmToken();
-                        if (token) {
-                            window.setFcmToken(token);
-                            clearInterval(tokenInterval);
-                        }
-                    }
-                }, 100);
+    class AndroidBridge(activity: MainActivity) {
+        private val activityRef = java.lang.ref.WeakReference(activity)
 
-                setTimeout(function() {
-                    clearInterval(tokenInterval);
-                }, 20000);
-
-                var lastUid = null;
-                function checkIndexedDb() {
-                    try {
-                        var openRequest = indexedDB.open("firebaseLocalStorageDb");
-                        openRequest.onsuccess = function(e) {
-                            var db = e.target.result;
-                            if (!db.objectStoreNames.contains("firebaseLocalStorage")) {
-                                db.close();
-                                return;
-                            }
-                            var transaction = db.transaction(["firebaseLocalStorage"], "readonly");
-                            var store = transaction.objectStore("firebaseLocalStorage");
-                            var getAllRequest = store.getAll();
-                            getAllRequest.onsuccess = function(event) {
-                                var items = event.target.result;
-                                var uid = null;
-                                if (items && items.length > 0) {
-                                    for (var i = 0; i < items.length; i++) {
-                                        var item = items[i];
-                                        if (item && item.value) {
-                                            var val = item.value;
-                                            if (typeof val === 'string') {
-                                                try {
-                                                    val = JSON.parse(val);
-                                                } catch(err) {}
-                                            }
-                                            if (val && val.uid) {
-                                                uid = val.uid;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                if (uid !== lastUid) {
-                                    lastUid = uid;
-                                    window.AndroidBridge.syncUid(uid);
-                                }
-                                db.close();
-                            };
-                            getAllRequest.onerror = function() {
-                                db.close();
-                            };
-                        };
-                        openRequest.onerror = function() {};
-                    } catch (e) {
-                        console.error("IndexedDB error:", e);
-                    }
-                }
-                setInterval(checkIndexedDb, 2000);
-                checkIndexedDb();
-            })();
-        """.trimIndent()
-        webView.evaluateJavascript(js, null)
-    }
-
-    inner class AndroidBridge {
         @android.webkit.JavascriptInterface
         fun syncUid(uid: String?) {
-            val sharedPref = getSharedPreferences("TVVC_PREFS", android.content.Context.MODE_PRIVATE)
+            val activity = activityRef.get() ?: return
+            val sharedPref = activity.getSharedPreferences("TVVC_PREFS", android.content.Context.MODE_PRIVATE)
             if (!uid.isNullOrEmpty()) {
                 sharedPref.edit().putString("auth_uid", uid).apply()
                 Log.d("TVVC", "syncUid: saved auth_uid = $uid")
@@ -248,35 +186,36 @@ class MainActivity : ComponentActivity() {
         }
 
         @android.webkit.JavascriptInterface
-        fun getFcmToken(): String? {
-            return fcmToken
-        }
-
-        @android.webkit.JavascriptInterface
         fun onIncomingCallReceived(callId: String, callerId: String, callerName: String) {
+            val activity = activityRef.get() ?: return
             Log.d("TVVC", "onIncomingCallReceived via JS Bridge: callId=$callId, callerId=$callerId, callerName=$callerName")
             
-            val serviceIntent = Intent(this@MainActivity, CallNotificationService::class.java).apply {
+            val serviceIntent = Intent(activity, CallNotificationService::class.java).apply {
                 putExtra("callId", callId)
                 putExtra("callerId", callerId)
                 putExtra("callerName", callerName)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    activity.startForegroundService(serviceIntent)
+                } else {
+                    activity.startService(serviceIntent)
+                }
+            } catch (e: Exception) {
+                Log.e("TVVC", "Failed to start foreground service from JS Bridge", e)
             }
 
             // Attempt to bring app to foreground
-            runOnUiThread {
+            activity.runOnUiThread {
+                val act = activityRef.get() ?: return@runOnUiThread
                 try {
-                    val activityIntent = Intent(this@MainActivity, MainActivity::class.java).apply {
+                    val activityIntent = Intent(act, MainActivity::class.java).apply {
                         action = "INCOMING_CALL"
                         putExtra("callId", callId)
                         putExtra("callerId", callerId)
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                     }
-                    startActivity(activityIntent)
+                    act.startActivity(activityIntent)
                 } catch (e: Exception) {
                     Log.e("TVVC", "Error trying to launch activity on call start", e)
                 }
@@ -285,9 +224,79 @@ class MainActivity : ComponentActivity() {
 
         @android.webkit.JavascriptInterface
         fun cancelIncomingCallNotification() {
+            val activity = activityRef.get() ?: return
             Log.d("TVVC", "cancelIncomingCallNotification via JS Bridge")
-            val intent = Intent(this@MainActivity, CallNotificationService::class.java)
-            stopService(intent)
+            val intent = Intent(activity, CallNotificationService::class.java)
+            activity.stopService(intent)
         }
+
+        @android.webkit.JavascriptInterface
+        fun setSpeakerphoneOn(on: Boolean) {
+            val activity = activityRef.get() ?: return
+            Log.d("TVVC", "setSpeakerphoneOn: $on")
+            try {
+                val audioManager = activity.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+                audioManager.isSpeakerphoneOn = on
+            } catch (e: Exception) {
+                Log.e("TVVC", "Error setting speakerphone state", e)
+            }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun setCallActive(active: Boolean) {
+            val activity = activityRef.get() ?: return
+            activity.runOnUiThread {
+                activity.isCallActive = active
+            }
+            try {
+                val audioManager = activity.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+                audioManager.mode = if (active) android.media.AudioManager.MODE_IN_COMMUNICATION else android.media.AudioManager.MODE_NORMAL
+            } catch (e: Exception) {
+                Log.e("TVVC", "Error setting call active audio mode", e)
+            }
+        }
+    }
+
+    override fun onBackPressed() {
+        if (isCallActive) {
+            showExitConfirmationDialog()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
+    private fun showExitConfirmationDialog() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Exit Call?")
+            .setMessage("Are you sure you want to hang up and exit the app?")
+            .setPositiveButton("Exit") { _, _ ->
+                webView.evaluateJavascript("if (window.hangUpCall) { window.hangUpCall(); }", null)
+                finish()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (isCallActive) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val params = android.app.PictureInPictureParams.Builder().build()
+                enterPictureInPictureMode(params)
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                @Suppress("DEPRECATION")
+                enterPictureInPictureMode()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        if (::webView.isInitialized) {
+            webView.removeJavascriptInterface("AndroidBridge")
+            (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+            webView.removeAllViews()
+            webView.destroy()
+        }
+        super.onDestroy()
     }
 }
