@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Phone, PhoneOff } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import type { User } from '../App';
 import { db, functions } from '../firebase';
@@ -12,12 +12,16 @@ interface CallScreenProps {
   currentUser: User;
   remoteUserId: string;
   isIncoming: boolean;
+  callId: string;
   onEndCall: () => void;
 }
 
-export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEndCall }: CallScreenProps) {
+export default function CallScreen({ currentUser, remoteUserId, isIncoming, callId, onEndCall }: CallScreenProps) {
   const [callState, setCallState] = useState<'ringing' | 'connected'>('ringing');
   const [remoteUserName, setRemoteUserName] = useState<string>('Unknown');
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+  const [calleeUnavailable, setCalleeUnavailable] = useState(false);
   const actionButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -48,10 +52,58 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
   const isHangingUp = useRef(false);
   const isCancelled = useRef(false);
 
-  const callDocId = currentUser.id < remoteUserId ? `${currentUser.id}_${remoteUserId}` : `${remoteUserId}_${currentUser.id}`;
+  const isRemoteDescriptionSet = useRef(false);
+  const queuedCandidates = useRef<RTCIceCandidate[]>([]);
+  const ringingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const callDocId = callId;
 
   // Memoize the Firestore document reference — it never changes for the life of this call.
   const callDoc = useMemo(() => doc(db, 'calls', callDocId), [callDocId]);
+
+  const processCandidate = useCallback(async (candidate: RTCIceCandidate) => {
+    try {
+      if (pc.current) {
+        await pc.current.addIceCandidate(candidate);
+      }
+    } catch (err) {
+      console.error('Error adding ICE candidate:', err);
+    }
+  }, []);
+
+  const addOrQueueCandidate = useCallback((candidate: RTCIceCandidate) => {
+    if (isRemoteDescriptionSet.current) {
+      processCandidate(candidate);
+    } else {
+      queuedCandidates.current.push(candidate);
+    }
+  }, [processCandidate]);
+
+  const flushQueuedCandidates = useCallback(() => {
+    isRemoteDescriptionSet.current = true;
+    queuedCandidates.current.forEach((candidate) => {
+      processCandidate(candidate);
+    });
+    queuedCandidates.current = [];
+  }, [processCandidate]);
+
+  const toggleMute = useCallback(() => {
+    if (localStream.current) {
+      localStream.current.getAudioTracks().forEach((track) => {
+        track.enabled = !track.enabled;
+      });
+      setIsMuted(prev => !prev);
+    }
+  }, []);
+
+  const toggleVideo = useCallback(() => {
+    if (localStream.current) {
+      localStream.current.getVideoTracks().forEach((track) => {
+        track.enabled = !track.enabled;
+      });
+      setIsVideoOff(prev => !prev);
+    }
+  }, []);
 
   // Sync calling notifications to the native Android app container
   useEffect(() => {
@@ -94,6 +146,14 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
   }, [isIncoming, callState]);
 
   const hangup = useCallback(async () => {
+    isCancelled.current = true;
+    if (ringingTimeoutRef.current) {
+      clearTimeout(ringingTimeoutRef.current);
+      ringingTimeoutRef.current = null;
+    }
+    isRemoteDescriptionSet.current = false;
+    queuedCandidates.current = [];
+
     if (isHangingUp.current) return;
     isHangingUp.current = true;
 
@@ -150,6 +210,18 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     };
     return () => {
       window.onCallCancelledBySystem = undefined;
+    };
+  }, [hangup]);
+
+  // Sync call state and hangUpCall registration with Android native bridge
+  useEffect(() => {
+    window.hangUpCall = hangup;
+    window.AndroidBridge?.setCallActive?.(true);
+    window.AndroidBridge?.setSpeakerphoneOn?.(true);
+
+    return () => {
+      window.hangUpCall = undefined;
+      window.AndroidBridge?.setCallActive?.(false);
     };
   }, [hangup]);
 
@@ -234,6 +306,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
     const offerDescription = callData.offer;
     await pc.current.setRemoteDescription(new RTCSessionDescription(offerDescription));
+    flushQueuedCandidates();
     if (isCancelled.current) return;
 
     const answerDescription = await pc.current.createAnswer();
@@ -254,13 +327,13 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const candidate = new RTCIceCandidate(change.doc.data());
-          pc.current?.addIceCandidate(candidate);
+          addOrQueueCandidate(candidate);
         }
       });
     });
     unsubscribes.current.push(unsub);
 
-  }, [callDoc, hangup]);
+  }, [callDoc, hangup, addOrQueueCandidate, flushQueuedCandidates]);
 
   const startCall = useCallback(async () => {
     if (!pc.current) return;
@@ -300,7 +373,12 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       return;
     }
 
-    if (isCancelled.current) return;
+    if (isCancelled.current) {
+      if (!callDataToAnswer) {
+        try { await deleteDoc(callDoc); } catch (err) { console.error(err); }
+      }
+      return;
+    }
 
     if (callDataToAnswer) {
       console.log('Mutual call detected: remote user called first. Answering their call instead.');
@@ -317,22 +395,52 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
     };
 
     // Create offer
+    if (isCancelled.current) {
+      try { await deleteDoc(callDoc); } catch (err) { console.error(err); }
+      return;
+    }
     const offerDescription = await pc.current.createOffer();
-    if (isCancelled.current) return;
+    if (isCancelled.current) {
+      try { await deleteDoc(callDoc); } catch (err) { console.error(err); }
+      return;
+    }
     await pc.current.setLocalDescription(offerDescription);
-    if (isCancelled.current) return;
+    if (isCancelled.current) {
+      try { await deleteDoc(callDoc); } catch (err) { console.error(err); }
+      return;
+    }
 
     const offer = {
       sdp: offerDescription.sdp,
       type: offerDescription.type,
     };
 
+    if (isCancelled.current) {
+      try { await deleteDoc(callDoc); } catch (err) { console.error(err); }
+      return;
+    }
     await updateDoc(callDoc, { offer, status: 'ringing' });
-    if (isCancelled.current) return;
+    if (isCancelled.current) {
+      try { await deleteDoc(callDoc); } catch (err) { console.error(err); }
+      return;
+    }
+
+    // Start 30-second ringing timeout
+    ringingTimeoutRef.current = setTimeout(async () => {
+      setCalleeUnavailable(true);
+      try {
+        await deleteDoc(callDoc);
+      } catch (err) {
+        console.error('Error deleting call doc on ringing timeout:', err);
+      }
+      ringingTimeoutRef.current = setTimeout(() => {
+        hangup();
+      }, 3000);
+    }, 30000);
 
     // Listen for remote answer
     let hasExisted = false;
-    const unsub1 = onSnapshot(callDoc, (snapshot) => {
+    const unsub1 = onSnapshot(callDoc, async (snapshot) => {
       if (isCancelled.current) return;
       if (snapshot.exists()) {
         hasExisted = true;
@@ -346,8 +454,17 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       }
       const data = snapshot.data();
       if (!pc.current?.currentRemoteDescription && data?.answer) {
+        if (ringingTimeoutRef.current) {
+          clearTimeout(ringingTimeoutRef.current);
+          ringingTimeoutRef.current = null;
+        }
         const answerDescription = new RTCSessionDescription(data.answer);
-        pc.current?.setRemoteDescription(answerDescription);
+        try {
+          await pc.current?.setRemoteDescription(answerDescription);
+          flushQueuedCandidates();
+        } catch (err) {
+          console.error('Failed to set remote description on caller:', err);
+        }
         setCallState('connected');
       }
     });
@@ -359,12 +476,12 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const candidate = new RTCIceCandidate(change.doc.data());
-          pc.current?.addIceCandidate(candidate);
+          addOrQueueCandidate(candidate);
         }
       });
     });
     unsubscribes.current.push(unsub2);
-  }, [callDoc, hangup, answerCall, currentUser.id, remoteUserId]);
+  }, [callDoc, hangup, answerCall, currentUser.id, remoteUserId, addOrQueueCandidate, flushQueuedCandidates]);
 
   // Listen for call deletion / cancellation immediately for incoming calls
   useEffect(() => {
@@ -453,12 +570,21 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
     return () => {
       isCancelled.current = true;
+      if (ringingTimeoutRef.current) {
+        clearTimeout(ringingTimeoutRef.current);
+        ringingTimeoutRef.current = null;
+      }
       hangup();
     };
   }, [isIncoming, startCall, hangup]);
 
   return (
     <div className="call-container">
+      {calleeUnavailable && (
+        <div className="unavailable-banner">
+          Callee Unavailable
+        </div>
+      )}
       <video ref={remoteVideoRef} className="remote-video" autoPlay playsInline />
       <video ref={localVideoRef} className="local-video" autoPlay playsInline muted />
 
@@ -489,6 +615,12 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, onEn
 
       {callState === 'connected' && (
         <div className="call-controls">
+          <button className={`control-btn toggle ${isMuted ? 'off' : ''}`} onClick={toggleMute}>
+            {isMuted ? <MicOff size={32} /> : <Mic size={32} />}
+          </button>
+          <button className={`control-btn toggle ${isVideoOff ? 'off' : ''}`} onClick={toggleVideo}>
+            {isVideoOff ? <VideoOff size={32} /> : <Video size={32} />}
+          </button>
           <button ref={actionButtonRef} className="control-btn end" onClick={hangup} autoFocus>
             <PhoneOff size={32} />
           </button>

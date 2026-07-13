@@ -4,11 +4,7 @@ import { httpsCallable } from 'firebase/functions';
 import { signInWithCustomToken } from 'firebase/auth';
 import { auth, functions } from '../firebase';
 
-interface PinScreenProps {
-  onAuthenticated: () => void;
-}
-
-export default function PinScreen({ onAuthenticated }: PinScreenProps) {
+export default function PinScreen() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -45,7 +41,6 @@ export default function PinScreen({ onAuthenticated }: PinScreenProps) {
       const { token } = result.data as { token: string };
 
       await signInWithCustomToken(auth, token);
-      onAuthenticated();
     } catch (err: any) {
       console.error('Authentication error:', err);
       const message = err.message || 'Wrong PIN. Please try again.';
@@ -53,7 +48,7 @@ export default function PinScreen({ onAuthenticated }: PinScreenProps) {
       setPin('');
       setLoading(false);
     }
-  }, [onAuthenticated]);
+  }, []);
 
   const handleDigit = useCallback((digit: string) => {
     if (loading || pin.length >= 6) return;

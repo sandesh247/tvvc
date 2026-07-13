@@ -16,14 +16,17 @@ export interface User {
 
 declare global {
   interface Window {
-    setFcmToken?: (token: string) => void;
+    handleFcmToken?: (token: string) => void;
     AndroidBridge?: {
-      getFcmToken: () => string | null;
       syncUid: (uid: string | null) => void;
       onIncomingCallReceived: (callId: string, callerId: string, callerName: string) => void;
       cancelIncomingCallNotification: () => void;
+      setCallActive?: (active: boolean) => void;
+      setSpeakerphoneOn?: (on: boolean) => void;
     };
     onCallCancelledBySystem?: () => void;
+    handleIncomingCallIntent?: (callId: string, callerId: string) => void;
+    hangUpCall?: () => void;
   }
 }
 
@@ -32,7 +35,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [fcmToken, setFcmTokenState] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
-  const [activeCall, setActiveCall] = useState<{ remoteUserId: string; incoming: boolean } | null>(null);
+  const [activeCall, setActiveCall] = useState<{ remoteUserId: string; incoming: boolean; callId: string } | null>(null);
   const [profileLoading, setProfileLoading] = useState<boolean>(false);
   const [profileError, setProfileError] = useState<string | null>(null);
 
@@ -59,10 +62,12 @@ function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        window.AndroidBridge?.syncUid(firebaseUser.uid);
         // User is authenticated — check if they have a Firestore profile
         await loadUserProfile(firebaseUser.uid);
         setAuthState('authenticated');
       } else {
+        window.AndroidBridge?.syncUid(null);
         setCurrentUser(null);
         setAuthState('unauthenticated');
         setProfileError(null);
@@ -71,35 +76,26 @@ function App() {
     });
     return () => unsubscribe();
   }, [loadUserProfile]);
-  // Prevent any viewport-level scrolling (keeps the main container perfectly locked)
-  useEffect(() => {
-    const preventScroll = () => {
-      if (window.scrollY !== 0 || window.scrollX !== 0) {
-        window.scrollTo(0, 0);
-      }
-    };
-    window.addEventListener('scroll', preventScroll);
-    document.body.addEventListener('scroll', preventScroll);
-    return () => {
-      window.removeEventListener('scroll', preventScroll);
-      document.body.removeEventListener('scroll', preventScroll);
-    };
+
+  const handleIncomingCall = useCallback((remoteUserId: string, callId: string) => {
+    setActiveCall({ remoteUserId, incoming: true, callId });
   }, []);
 
   // Expose global function for Android WebView FCM token injection.
-  // window.setFcmToken is the only path needed; the WebView calls it
-  // via evaluateJavascript once the FCM token is ready.
   useEffect(() => {
-    window.setFcmToken = (token: string) => {
+    window.handleFcmToken = (token: string) => {
       console.log('Received FCM token from native app:', token);
       setFcmTokenState(token);
     };
-  }, []);
+    window.handleIncomingCallIntent = (callId: string, callerId: string) => {
+      handleIncomingCall(callerId, callId);
+    };
+  }, [handleIncomingCall]);
 
   // Sync FCM token to Firestore when it changes
   useEffect(() => {
     if (fcmToken && currentUser && currentUser.fcmToken !== fcmToken) {
-      setDoc(doc(db, 'users', currentUser.id), { fcmToken }, { merge: true });
+      setDoc(doc(db, 'users', currentUser.id, 'private', 'secrets'), { fcmToken }, { merge: true });
       setCurrentUser(prev => prev ? { ...prev, fcmToken } : null);
     }
   }, [fcmToken, currentUser]);
@@ -191,7 +187,8 @@ function App() {
           if (createdAt && Date.now() - createdAt.getTime() > 120000) return;
 
           if (callerId) {
-            handleIncomingCall(callerId);
+            const callId = change.doc.id;
+            handleIncomingCall(callerId, callId);
           }
         }
       });
@@ -205,12 +202,13 @@ function App() {
     if (!firebaseUser) return;
 
     const user: User = { id: firebaseUser.uid, name, lastSeen: serverTimestamp() };
-    if (fcmToken) {
-      user.fcmToken = fcmToken;
-    }
-
+    // Do NOT write fcmToken to public user document
     try {
       await setDoc(doc(db, 'users', firebaseUser.uid), user);
+      if (fcmToken) {
+        await setDoc(doc(db, 'users', firebaseUser.uid, 'private', 'secrets'), { fcmToken }, { merge: true });
+        user.fcmToken = fcmToken;
+      }
       setCurrentUser(user);
     } catch (e) {
       console.error('Error registering user:', e);
@@ -228,12 +226,10 @@ function App() {
   };
 
   const handleInitiateCall = useCallback((remoteUserId: string) => {
-    setActiveCall({ remoteUserId, incoming: false });
-  }, []);
-
-  const handleIncomingCall = useCallback((remoteUserId: string) => {
-    setActiveCall({ remoteUserId, incoming: true });
-  }, []);
+    if (!currentUser) return;
+    const callId = `${currentUser.id}_${remoteUserId}_${crypto.randomUUID()}`;
+    setActiveCall({ remoteUserId, incoming: false, callId });
+  }, [currentUser]);
 
   const handleEndCall = useCallback(() => {
     setActiveCall(null);
@@ -255,7 +251,7 @@ function App() {
 
   // Not authenticated — show PIN screen
   if (authState === 'unauthenticated') {
-    return <PinScreen onAuthenticated={() => {}} />;
+    return <PinScreen />;
   }
 
   // Error loading profile — show Error screen with Retry option
@@ -299,6 +295,7 @@ function App() {
           currentUser={currentUser}
           remoteUserId={activeCall.remoteUserId}
           isIncoming={activeCall.incoming}
+          callId={activeCall.callId}
           onEndCall={handleEndCall}
         />
       ) : (

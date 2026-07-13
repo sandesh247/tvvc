@@ -701,3 +701,35 @@ button:focus, input:focus, .contact-item:focus {
     bottom: 12px;
   }
 }
+
+/* Media Toggles & Unavailable Banner */
+.control-btn.toggle {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.control-btn.toggle:hover, .control-btn.toggle:focus {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.control-btn.toggle.off {
+  background: linear-gradient(135deg, #EF4444, #DC2626);
+  box-shadow: 0 8px 20px rgba(239, 68, 68, 0.4);
+}
+
+.unavailable-banner {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(135deg, #EF4444, #DC2626);
+  color: white;
+  padding: 14px 28px;
+  border-radius: 12px;
+  font-size: 20px;
+  font-weight: 600;
+  box-shadow: 0 8px 25px rgba(239, 68, 68, 0.5);
+  z-index: 300;
+  animation: fadeIn 0.3s ease;
+  letter-spacing: 0.5px;
+}
