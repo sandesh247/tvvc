@@ -1,5 +1,6 @@
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
 
@@ -54,11 +55,13 @@ interface PinAttempt {
 interface CachedTurn {
   iceServers: IceServer[];
   expiresAt: number;
+  configUpdateTime: number;
 }
 
 // Global Memory Cache for TURN credentials (persists in instances across calls)
 let turnCache: CachedTurn | null = null;
-const CACHE_DURATION_MS = 60 * 60 * 1000; // 1 hour
+let pendingPromise: Promise<GetTurnCredentialsResponse> | null = null;
+const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes cache window
 
 /**
  * Triggered when a new call document is created in Firestore.
@@ -97,40 +100,60 @@ export const onCallCreated = onDocumentCreated({
     console.error("Error fetching caller profile:", error);
   }
 
-  const userDoc = await db.collection("users").doc(calleeId).get();
-  if (!userDoc.exists) {
-    console.log(`User ${calleeId} not found`);
-    return;
-  }
-
-  const userData = userDoc.data() as UserDocument | undefined;
-  const fcmToken = userData?.fcmToken;
-
-  if (!fcmToken) {
-    console.log(`User ${calleeId} has no fcmToken registered.`);
-    return;
-  }
-
-  console.log(`Sending wake-up push notification to ${fcmToken}`);
-
-  const message = {
-    token: fcmToken,
-    data: {
-      action: "INCOMING_CALL",
-      callId: callId,
-      callerId: callerId,
-      callerName: callerName,
-    },
-    android: {
-      priority: "high" as const,
-    },
-  };
-
+  // Wrap profile/secrets fetching and FCM push notification dispatch in a try-catch block to handle errors robustly (F-21)
   try {
-    await admin.messaging().send(message);
-    console.log("Successfully sent message");
+    let fcmToken: string | undefined;
+
+    // Try retrieving FCM token from private secrets first
+    try {
+      const secretsDoc = await db.collection("users").doc(calleeId).collection("private").doc("secrets").get();
+      if (secretsDoc.exists) {
+        fcmToken = secretsDoc.data()?.fcmToken;
+      }
+    } catch (secretsError) {
+      console.warn(`Error fetching secrets for user ${calleeId}:`, secretsError);
+    }
+
+    // Fallback to the user profile document if not found in secrets
+    if (!fcmToken) {
+      const userDoc = await db.collection("users").doc(calleeId).get();
+      if (userDoc.exists) {
+        const userData = userDoc.data() as UserDocument | undefined;
+        fcmToken = userData?.fcmToken;
+      } else {
+        console.log(`User ${calleeId} profile not found`);
+        return;
+      }
+    }
+
+    if (!fcmToken) {
+      console.log(`User ${calleeId} has no fcmToken registered.`);
+      return;
+    }
+
+    console.log(`Sending wake-up push notification to ${fcmToken}`);
+
+    const message = {
+      token: fcmToken,
+      data: {
+        action: "INCOMING_CALL",
+        callId: callId,
+        callerId: callerId,
+        callerName: callerName,
+      },
+      android: {
+        priority: "high" as const,
+      },
+    };
+
+    try {
+      await admin.messaging().send(message);
+      console.log("Successfully sent FCM message");
+    } catch (error) {
+      console.error("Error sending message via FCM:", error);
+    }
   } catch (error) {
-    console.error("Error sending message:", error);
+    console.error("Error fetching callee profile or dispatching FCM notification:", error);
   }
 });
 
@@ -155,42 +178,49 @@ export const verifyPin = onCall<VerifyPinRequest, Promise<VerifyPinResponse>>(as
   
   // 2-segment path fix
   const attemptRef = db.doc(`pinAttempts/${safeIp}`);
-  const attemptDoc = await attemptRef.get();
-  const now = Date.now();
+  const configRef = db.doc("admin/config");
   const WINDOW_MS = 60 * 60 * 1000; // 1 hour
   const MAX_ATTEMPTS = 10;
 
-  if (attemptDoc.exists) {
-    const data = attemptDoc.data() as PinAttempt | undefined;
-    const count = data?.count ?? 0;
-    const windowStart = data?.windowStart ?? 0;
+  // Move rate limit counter checking, config validation, and increment/delete inside transaction to prevent TOCTOU vulnerability (F-02)
+  const isPinValid = await db.runTransaction(async (transaction) => {
+    const freshDoc = await transaction.get(attemptRef);
+    const configDoc = await transaction.get(configRef);
+    const freshNow = Date.now();
 
-    if (now - windowStart < WINDOW_MS && count >= MAX_ATTEMPTS) {
-      console.warn(`Rate limit exceeded for IP ${safeIp}`);
-      throw new HttpsError("resource-exhausted", "Too many failed attempts. Please try again later.");
+    // Check rate limit first
+    if (freshDoc.exists) {
+      const data = freshDoc.data() as PinAttempt | undefined;
+      const count = data?.count ?? 0;
+      const windowStart = data?.windowStart ?? 0;
+
+      if (freshNow - windowStart < WINDOW_MS && count >= MAX_ATTEMPTS) {
+        console.warn(`Rate limit exceeded for IP ${safeIp}`);
+        throw new HttpsError("resource-exhausted", "Too many failed attempts. Please try again later.");
+      }
     }
-  }
 
-  // Read the stored PIN from the admin config document
-  const configDoc = await db.doc("admin/config").get();
-  if (!configDoc.exists) {
-    console.error("Admin config document not found. Create /admin/config with a 'pin' field.");
-    throw new HttpsError("internal", "Server configuration error.");
-  }
+    if (!configDoc.exists) {
+      console.error("Admin config document not found. Create /admin/config with a 'pin' field.");
+      throw new HttpsError("internal", "Server configuration error.");
+    }
 
-  const config = configDoc.data() as AdminConfig | undefined;
-  const storedPin = config?.pin;
+    const config = configDoc.data() as AdminConfig | undefined;
+    const storedPin = config?.pin;
 
-  if (!storedPin) {
-    console.error("PIN not configured in /admin/config document.");
-    throw new HttpsError("internal", "Server configuration error.");
-  }
+    if (!storedPin) {
+      console.error("PIN not configured in /admin/config document.");
+      throw new HttpsError("internal", "Server configuration error.");
+    }
 
-  if (pin !== String(storedPin)) {
-    // Increment the failure counter transactionally with expireAt timestamp
-    await db.runTransaction(async (transaction) => {
-      const freshDoc = await transaction.get(attemptRef);
-      const freshNow = Date.now();
+    if (pin === String(storedPin)) {
+      // On success, clear the rate-limit counter inside the transaction
+      if (freshDoc.exists) {
+        transaction.delete(attemptRef);
+      }
+      return true;
+    } else {
+      // Increment the failure counter transactionally with expireAt timestamp
       const existingData = freshDoc.exists ? (freshDoc.data() as PinAttempt) : null;
       const isNewWindow = !existingData || freshNow - existingData.windowStart >= WINDOW_MS;
 
@@ -203,13 +233,12 @@ export const verifyPin = onCall<VerifyPinRequest, Promise<VerifyPinResponse>>(as
         windowStart,
         expireAt,
       });
-    });
-    throw new HttpsError("permission-denied", "Invalid PIN.");
-  }
+      return false;
+    }
+  });
 
-  // On success, clear the rate-limit counter
-  if (attemptDoc.exists) {
-    await attemptRef.delete();
+  if (!isPinValid) {
+    throw new HttpsError("permission-denied", "Invalid PIN.");
   }
 
   // Create a custom auth token using the deviceId as the UID
@@ -225,82 +254,205 @@ export const verifyPin = onCall<VerifyPinRequest, Promise<VerifyPinResponse>>(as
 /**
  * Callable function: returns TURN server credentials for WebRTC.
  */
-export const getTurnCredentials = onCall<unknown, Promise<GetTurnCredentialsResponse>>(async (request) => {
+export const getTurnCredentials = onCall<unknown, Promise<GetTurnCredentialsResponse>>((request) => {
   if (!request.auth) {
-    throw new HttpsError("unauthenticated", "Authentication required.");
+    return Promise.reject(new HttpsError("unauthenticated", "Authentication required."));
   }
 
-  const now = Date.now();
-  if (turnCache && now < turnCache.expiresAt) {
-    console.log("Returning cached TURN credentials (cache hit)");
-    return { iceServers: turnCache.iceServers };
+  // Coalesce concurrent requests by returning the same pending promise if fetch is active (F-20)
+  if (pendingPromise) {
+    console.log("Awaiting active TURN credentials promise (coalescing)");
+    return pendingPromise;
   }
 
-  console.log("TURN credentials cache miss, fetching configuration...");
-  const configDoc = await db.doc("admin/config").get();
-  const config = configDoc.data() as AdminConfig | undefined;
-
-  const meteredApiKey = config?.meteredApiKey;
-  const meteredAppName = config?.meteredAppName || "tvvc";
-  const turnUsername = config?.turnUsername;
-  const turnCredential = config?.turnCredential;
-
-  // Default to STUN-only configuration
-  let iceServers: IceServer[] = [
-    {
-      urls: ["stun:stun.relay.metered.ca:80"],
-    },
-  ];
-
-  let fetchedServers: IceServer[] | null = null;
-
-  // Try dynamic API fetch first if apiKey is provided
-  if (meteredApiKey) {
+  pendingPromise = (async (): Promise<GetTurnCredentialsResponse> => {
     try {
-      const response = await fetch(`https://${meteredAppName}.metered.live/api/v1/turn/credentials?apiKey=${meteredApiKey}`);
-      if (response.ok) {
-        const data = await response.json();
-        if (Array.isArray(data)) {
-          console.log("Successfully fetched dynamic TURN credentials from metered.ca");
-          fetchedServers = data as IceServer[];
-        }
-      } else {
-        console.warn(`Metered.ca API returned status: ${response.status}`);
+      const now = Date.now();
+      // Retrieve the admin config to check for changes (F-19)
+      const configDoc = await db.doc("admin/config").get();
+      const config = configDoc.data() as AdminConfig | undefined;
+      const configUpdateTime = configDoc.updateTime?.toMillis() || 0;
+
+      // Check if configuration has been updated. If so, invalidate cache.
+      if (turnCache && turnCache.configUpdateTime !== configUpdateTime) {
+        console.log("Admin config changed. Invalidating TURN cache.");
+        turnCache = null;
       }
+
+      // If cache is valid, return it.
+      if (turnCache && now < turnCache.expiresAt) {
+        console.log("Returning cached TURN credentials (cache hit)");
+        return { iceServers: turnCache.iceServers };
+      }
+
+      const meteredApiKey = config?.meteredApiKey;
+      const meteredAppName = config?.meteredAppName || "tvvc";
+      const turnUsername = config?.turnUsername;
+      const turnCredential = config?.turnCredential;
+
+      // Default to STUN-only configuration
+      let iceServers: IceServer[] = [
+        {
+          urls: ["stun:stun.relay.metered.ca:80"],
+        },
+      ];
+
+      let fetchedServers: IceServer[] | null = null;
+
+      // Try dynamic API fetch first if apiKey is provided
+      if (meteredApiKey) {
+        try {
+          const response = await fetch(`https://${meteredAppName}.metered.live/api/v1/turn/credentials?apiKey=${meteredApiKey}`);
+          if (response.ok) {
+            const data = await response.json();
+            if (Array.isArray(data)) {
+              console.log("Successfully fetched dynamic TURN credentials from metered.ca");
+              fetchedServers = data as IceServer[];
+            }
+          } else {
+            console.warn(`Metered.ca API returned status: ${response.status}`);
+          }
+        } catch (error) {
+          console.error("Error fetching TURN credentials from metered.ca API:", error);
+        }
+      }
+
+      if (fetchedServers) {
+        iceServers = fetchedServers;
+      } else if (turnUsername && turnCredential) {
+        console.log("Using fallback static TURN credentials");
+        iceServers.push({
+          urls: [
+            "turn:global.relay.metered.ca:80",
+            "turn:global.relay.metered.ca:443",
+            "turns:global.relay.metered.ca:443?transport=tcp",
+          ],
+          username: turnUsername,
+          credential: turnCredential,
+        });
+      } else {
+        console.log("No TURN credentials configured, falling back to STUN-only");
+      }
+
+      // Cache the fetched credentials along with the config update timestamp
+      turnCache = {
+        iceServers,
+        expiresAt: Date.now() + CACHE_DURATION_MS,
+        configUpdateTime,
+      };
+
+      return { iceServers };
     } catch (error) {
-      console.error("Error fetching TURN credentials from metered.ca API:", error);
+      console.error("Error retrieving configuration or fetching TURN credentials:", error);
+      throw new HttpsError("internal", "Failed to retrieve TURN credentials.");
+    } finally {
+      // Clear the pending promise once resolve/reject completes
+      pendingPromise = null;
     }
+  })();
+
+  return pendingPromise;
+});
+
+/**
+ * Scheduled GC function: deletes call documents (and their subcollections) older than 10 minutes (F-10).
+ * Runs every 5 minutes.
+ */
+export const callsGc = onSchedule({
+  schedule: "every 5 minutes",
+}, async (event) => {
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+  console.log(`Starting Calls GC. Deleting calls created before ${tenMinutesAgo.toISOString()}`);
+
+  try {
+    const snapshot = await db.collection("calls")
+      .where("createdAt", "<", tenMinutesAgo)
+      .get();
+
+    if (snapshot.empty) {
+      console.log("No stale calls found.");
+      return;
+    }
+
+    console.log(`Found ${snapshot.size} stale calls to delete.`);
+
+    // Use db.recursiveDelete to delete call document and its subcollections recursively
+    for (const doc of snapshot.docs) {
+      try {
+        await db.recursiveDelete(doc.ref);
+        console.log(`Recursively deleted call document ${doc.id}`);
+      } catch (err) {
+        console.error(`Failed to delete call document ${doc.id}:`, err);
+      }
+    }
+  } catch (error) {
+    console.error("Error running Calls GC:", error);
   }
+});
 
-  if (fetchedServers) {
-    turnCache = {
-      iceServers: fetchedServers,
-      expiresAt: now + CACHE_DURATION_MS,
-    };
-    return { iceServers: fetchedServers };
+/**
+ * Scheduled GC function: deletes user profiles (and their subcollections) with lastSeen > 30 days (F-22).
+ * Runs once every 24 hours.
+ */
+export const usersGc = onSchedule({
+  schedule: "every 24 hours",
+}, async (event) => {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  console.log(`Starting Users GC. Deleting users inactive since ${thirtyDaysAgo.toISOString()}`);
+
+  try {
+    const snapshot = await db.collection("users")
+      .where("lastSeen", "<", thirtyDaysAgo)
+      .get();
+
+    if (snapshot.empty) {
+      console.log("No inactive users found in Firestore.");
+      return;
+    }
+
+    console.log(`Checking ${snapshot.size} potentially inactive users...`);
+
+    for (const doc of snapshot.docs) {
+      const uid = doc.id;
+      let shouldDelete = false;
+
+      try {
+        // Fetch UserRecord from Firebase Auth to inspect actual last activity (lastSignInTime / creationTime).
+        // This is necessary because presence tracking sets lastSeen to epoch 0 (1970-01-01) when a user goes offline,
+        // which makes any offline user look inactive for > 30 days.
+        const userRecord = await admin.auth().getUser(uid);
+        const lastSignInTime = userRecord.metadata.lastSignInTime 
+          ? new Date(userRecord.metadata.lastSignInTime) 
+          : new Date(0);
+        const creationTime = userRecord.metadata.creationTime 
+          ? new Date(userRecord.metadata.creationTime) 
+          : new Date(0);
+        
+        const lastActiveTime = Math.max(lastSignInTime.getTime(), creationTime.getTime());
+
+        if (lastActiveTime < thirtyDaysAgo.getTime()) {
+          console.log(`User ${uid} has been inactive on Auth since ${new Date(lastActiveTime).toISOString()}. Marking for deletion.`);
+          shouldDelete = true;
+        }
+      } catch (err: any) {
+        if (err.code === "auth/user-not-found") {
+          console.log(`User ${uid} not found in Firebase Auth. Marking for deletion.`);
+          shouldDelete = true;
+        } else {
+          console.error(`Error checking Auth status for user ${uid}:`, err);
+        }
+      }
+
+      if (shouldDelete) {
+        try {
+          await db.recursiveDelete(doc.ref);
+          console.log(`Recursively deleted user document and subcollections for ${uid}`);
+        } catch (deleteErr) {
+          console.error(`Failed to delete user document ${uid}:`, deleteErr);
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Error running Users GC:", error);
   }
-
-  // Fallback to static credentials if API fetch failed or was not configured
-  if (turnUsername && turnCredential) {
-    console.log("Using fallback static TURN credentials");
-    iceServers.push({
-      urls: [
-        "turn:global.relay.metered.ca:80",
-        "turn:global.relay.metered.ca:443",
-        "turns:global.relay.metered.ca:443?transport=tcp",
-      ],
-      username: turnUsername,
-      credential: turnCredential,
-    });
-  } else {
-    console.log("No TURN credentials configured, falling back to STUN-only");
-  }
-
-  // Cache static fallback configuration as well
-  turnCache = {
-    iceServers,
-    expiresAt: now + CACHE_DURATION_MS,
-  };
-
-  return { iceServers };
 });
