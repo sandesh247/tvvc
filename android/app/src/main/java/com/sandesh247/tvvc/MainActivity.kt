@@ -255,6 +255,44 @@ class MainActivity : ComponentActivity() {
                 Log.e("TVVC", "Error setting call active audio mode", e)
             }
         }
+
+        @android.webkit.JavascriptInterface
+        fun getDeviceId(): String {
+            val activity = activityRef.get() ?: return java.util.UUID.randomUUID().toString()
+            val sharedPref = activity.getSharedPreferences("TVVC_PREFS", android.content.Context.MODE_PRIVATE)
+            
+            // Check if there is already a device ID stored in SharedPreferences
+            var deviceId = sharedPref.getString("device_id", null)
+            if (!deviceId.isNullOrEmpty()) {
+                Log.d("TVVC", "getDeviceId: returning cached device ID: $deviceId")
+                return deviceId
+            }
+            
+            // Try to get ANDROID_ID
+            try {
+                val androidId = android.provider.Settings.Secure.getString(
+                    activity.contentResolver,
+                    android.provider.Settings.Secure.ANDROID_ID
+                )
+                // Filter out null, empty, or generic emulator ID
+                if (!androidId.isNullOrEmpty() && androidId != "9774d56d682e549c") {
+                    deviceId = androidId
+                    Log.d("TVVC", "getDeviceId: retrieved ANDROID_ID: $deviceId")
+                }
+            } catch (e: Exception) {
+                Log.e("TVVC", "Error retrieving ANDROID_ID", e)
+            }
+            
+            // Fallback to random UUID if ANDROID_ID was unavailable or invalid
+            if (deviceId.isNullOrEmpty()) {
+                deviceId = java.util.UUID.randomUUID().toString()
+                Log.d("TVVC", "getDeviceId: fell back to random UUID: $deviceId")
+            }
+            
+            // Persist the ID (whether it's ANDROID_ID or generated UUID)
+            sharedPref.edit().putString("device_id", deviceId).apply()
+            return deviceId
+        }
     }
 
     override fun onBackPressed() {

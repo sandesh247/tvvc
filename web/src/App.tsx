@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth, db } from './firebase';
 import PinScreen from './components/PinScreen';
 import Registration from './components/Registration';
@@ -23,6 +23,7 @@ declare global {
       cancelIncomingCallNotification: () => void;
       setCallActive?: (active: boolean) => void;
       setSpeakerphoneOn?: (on: boolean) => void;
+      getDeviceId?: () => string;
     };
     onCallCancelledBySystem?: () => void;
     handleIncomingCallIntent?: (callId: string, callerId: string) => void;
@@ -49,6 +50,7 @@ function App() {
         setCurrentUser({ id: uid, ...userDoc.data() } as User);
       } else {
         setCurrentUser(null);
+        await signOut(auth);
       }
     } catch (e: any) {
       console.error('Error loading user profile:', e);

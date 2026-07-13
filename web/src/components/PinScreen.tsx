@@ -22,7 +22,19 @@ export default function PinScreen() {
     setError('');
     try {
       // Generate or retrieve a stable device ID
-      let deviceId = localStorage.getItem('tvvc_device_id');
+      let deviceId = '';
+      if (window.AndroidBridge && typeof window.AndroidBridge.getDeviceId === 'function') {
+        try {
+          deviceId = window.AndroidBridge.getDeviceId();
+        } catch (e) {
+          console.error('Failed to get device ID from AndroidBridge:', e);
+        }
+      }
+      
+      if (!deviceId) {
+        deviceId = localStorage.getItem('tvvc_device_id') || '';
+      }
+
       if (!deviceId) {
         if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
           deviceId = crypto.randomUUID();
