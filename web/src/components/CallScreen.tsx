@@ -14,9 +14,10 @@ interface CallScreenProps {
   isIncoming: boolean;
   callId: string;
   onEndCall: () => void;
+  autoAnswer?: boolean;
 }
 
-export default function CallScreen({ currentUser, remoteUserId, isIncoming, callId, onEndCall }: CallScreenProps) {
+export default function CallScreen({ currentUser, remoteUserId, isIncoming, callId, onEndCall, autoAnswer }: CallScreenProps) {
   const [callState, setCallState] = useState<'ringing' | 'connected'>('ringing');
   const [remoteUserName, setRemoteUserName] = useState<string>('Unknown');
   const [isMuted, setIsMuted] = useState(false);
@@ -334,6 +335,12 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
     unsubscribes.current.push(unsub);
 
   }, [callDoc, hangup, addOrQueueCandidate, flushQueuedCandidates]);
+
+  useEffect(() => {
+    if (isIncoming && callState === 'ringing' && autoAnswer) {
+      answerCall();
+    }
+  }, [isIncoming, callState, autoAnswer, answerCall]);
 
   const startCall = useCallback(async () => {
     if (!pc.current) return;

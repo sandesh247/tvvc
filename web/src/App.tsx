@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth, db, functions } from './firebase';
 import PinScreen from './components/PinScreen';
@@ -28,10 +28,14 @@ declare global {
       setSpeakerphoneOn?: (on: boolean) => void;
       getDeviceId?: () => string;
       getVersionName?: () => string;
+      getFcmToken?: () => string | null;
     };
     onCallCancelledBySystem?: () => void;
-    handleIncomingCallIntent?: (callId: string, callerId: string) => void;
+    handleIncomingCallIntent?: (callId: string, callerId: string, autoAnswer?: boolean) => void;
     hangUpCall?: () => void;
+    onAppResume?: () => void;
+    onAppPause?: () => void;
+    onAppStop?: () => void;
   }
 }
 
@@ -57,7 +61,12 @@ function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [fcmToken, setFcmTokenState] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
-  const [activeCall, setActiveCall] = useState<{ remoteUserId: string; incoming: boolean; callId: string } | null>(null);
+  const [activeCall, setActiveCall] = useState<{ remoteUserId: string; incoming: boolean; callId: string; autoAnswer?: boolean } | null>(null);
+
+  const activeCallRef = useRef(activeCall);
+  useEffect(() => {
+    activeCallRef.current = activeCall;
+  }, [activeCall]);
   const [profileLoading, setProfileLoading] = useState<boolean>(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [versionState, setVersionState] = useState<'checking' | 'compatible' | 'blocked'>('checking');
@@ -137,8 +146,8 @@ function App() {
     return () => unsubscribe();
   }, [loadUserProfile]);
 
-  const handleIncomingCall = useCallback((remoteUserId: string, callId: string) => {
-    setActiveCall({ remoteUserId, incoming: true, callId });
+  const handleIncomingCall = useCallback((remoteUserId: string, callId: string, autoAnswer?: boolean) => {
+    setActiveCall({ remoteUserId, incoming: true, callId, autoAnswer });
   }, []);
 
   // Expose global function for Android WebView FCM token injection.
@@ -147,8 +156,19 @@ function App() {
       console.log('Received FCM token from native app:', token);
       setFcmTokenState(token);
     };
-    window.handleIncomingCallIntent = (callId: string, callerId: string) => {
-      handleIncomingCall(callerId, callId);
+
+    // Pull the token directly from the bridge if it's already available (resolving startup race conditions)
+    if (window.AndroidBridge?.getFcmToken) {
+      const token = window.AndroidBridge.getFcmToken();
+      if (token) {
+        console.log('Polled FCM token from native bridge on mount:', token);
+        setFcmTokenState(token);
+      }
+    }
+
+    window.handleIncomingCallIntent = (callId: string, callerId: string, autoAnswer?: boolean) => {
+      const shouldAutoAnswer = autoAnswer === true || (autoAnswer as any) === 'true';
+      handleIncomingCall(callerId, callId, shouldAutoAnswer);
     };
   }, [handleIncomingCall]);
 
@@ -179,19 +199,40 @@ function App() {
       }
     };
 
+    let isAppActive = true;
+
+    window.onAppResume = () => {
+      isAppActive = true;
+      updatePresence(true);
+    };
+
+    window.onAppPause = () => {
+      isAppActive = false;
+      if (!activeCallRef.current) {
+        updatePresence(false);
+      }
+    };
+
+    window.onAppStop = () => {
+      isAppActive = false;
+      if (!activeCallRef.current) {
+        updatePresence(false);
+      }
+    };
+
     // Mark online immediately on mount/auth
     updatePresence(true);
 
     // Send heartbeat every 60 seconds if page is visible
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (isAppActive && document.visibilityState === 'visible') {
         updatePresence(true);
       }
     }, 60000);
 
     // Mark online when returning to app
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && isAppActive) {
         updatePresence(true);
       }
     };
@@ -207,6 +248,9 @@ function App() {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('beforeunload', handleUnload);
+      window.onAppResume = undefined;
+      window.onAppPause = undefined;
+      window.onAppStop = undefined;
       updatePresence(false);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -373,6 +417,7 @@ function App() {
           isIncoming={activeCall.incoming}
           callId={activeCall.callId}
           onEndCall={handleEndCall}
+          autoAnswer={activeCall.autoAnswer}
         />
       ) : (
         <ContactList

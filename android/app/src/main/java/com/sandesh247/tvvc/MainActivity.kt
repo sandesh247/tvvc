@@ -4,8 +4,10 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -24,6 +26,7 @@ class MainActivity : ComponentActivity() {
     private var fcmToken: String? = null
     private var isPageLoaded = false
     private var isCallActive = false
+    private var pendingCallAction: String? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,6 +47,21 @@ class MainActivity : ComponentActivity() {
         }
         if (permissionsToRequest.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), 1)
+        }
+
+        // Request USE_FULL_SCREEN_INTENT permission on Android 14+ if not already granted
+        if (Build.VERSION.SDK_INT >= 34) {
+            val notificationManager = getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            if (!notificationManager.canUseFullScreenIntent()) {
+                try {
+                    val intent = Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                        data = android.net.Uri.fromParts("package", packageName, null)
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e("TVVC", "Failed to launch full screen intent settings screen", e)
+                }
+            }
         }
 
         webView = WebView(this)
@@ -71,6 +89,11 @@ class MainActivity : ComponentActivity() {
                 super.onPageFinished(view, url)
                 isPageLoaded = true
                 injectTokenIfAvailable()
+                pendingCallAction?.let { js ->
+                    Log.d("TVVC", "Evaluating pending call action: $js")
+                    webView.evaluateJavascript("if (window.handleIncomingCallIntent) { $js; }", null)
+                    pendingCallAction = null
+                }
                 view?.post {
                     view.requestFocus()
                 }
@@ -105,6 +128,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::webView.isInitialized) {
+            webView.evaluateJavascript("if (window.onAppResume) { window.onAppResume(); }", null)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (::webView.isInitialized) {
+            webView.evaluateJavascript("if (window.onAppPause) { window.onAppPause(); }", null)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (::webView.isInitialized) {
+            webView.evaluateJavascript("if (window.onAppStop) { window.onAppStop(); }", null)
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -133,11 +177,47 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        if (action == "ANSWER_CALL" && !callId.isNullOrEmpty()) {
+            try {
+                val notificationManager = getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                notificationManager.cancel(101)
+            } catch (e: Exception) {
+                Log.e("TVVC", "Failed to cancel notification 101", e)
+            }
+
+            val serviceIntent = Intent(this, CallNotificationService::class.java).apply {
+                putExtra("callId", callId)
+                putExtra("callerId", callerId)
+            }
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
+            } catch (e: Exception) {
+                Log.e("TVVC", "Failed to start CallNotificationService", e)
+            }
+
+            if (!isPageLoaded) {
+                pendingCallAction = "window.handleIncomingCallIntent('$callId', '${callerId ?: ""}', true)"
+                webView.loadUrl(BuildConfig.WEB_APP_URL)
+            } else {
+                Log.d("TVVC", "Page already loaded, evaluating handleIncomingCallIntent via JS with autoAnswer=true.")
+                runOnUiThread {
+                    webView.evaluateJavascript(
+                        "if (window.handleIncomingCallIntent) { window.handleIncomingCallIntent('$callId', '${callerId ?: ""}', true); }",
+                        null
+                    )
+                }
+            }
+            return
+        }
+
         if (action == "INCOMING_CALL" && !callId.isNullOrEmpty()) {
             if (!isPageLoaded) {
-                val url = "${BuildConfig.WEB_APP_URL}?action=INCOMING_CALL&callId=${callId}&callerId=${callerId ?: ""}"
-                Log.d("TVVC", "Loading intent URL: $url")
-                webView.loadUrl(url)
+                pendingCallAction = "window.handleIncomingCallIntent('$callId', '${callerId ?: ""}', false)"
+                webView.loadUrl(BuildConfig.WEB_APP_URL)
             } else {
                 Log.d("TVVC", "Page already loaded, evaluating handleIncomingCallIntent via JS.")
                 runOnUiThread {
@@ -183,6 +263,15 @@ class MainActivity : ComponentActivity() {
                 sharedPref.edit().remove("auth_uid").apply()
                 Log.d("TVVC", "syncUid: removed auth_uid")
             }
+            activity.runOnUiThread {
+                activity.injectTokenIfAvailable()
+            }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun getFcmToken(): String? {
+            val activity = activityRef.get() ?: return null
+            return activity.fcmToken
         }
 
         @android.webkit.JavascriptInterface
@@ -302,6 +391,47 @@ class MainActivity : ComponentActivity() {
         @android.webkit.JavascriptInterface
         fun getVersionCode(): Int {
             return BuildConfig.VERSION_CODE
+        }
+
+        @android.webkit.JavascriptInterface
+        fun requestIgnoreBatteryOptimizations() {
+            val activity = activityRef.get() ?: return
+            try {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:${activity.packageName}")
+                }
+                activity.startActivity(intent)
+            } catch (e: Exception) {
+                Log.e("TVVC", "Error launching ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", e)
+            }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun requestOverlayPermission() {
+            val activity = activityRef.get() ?: return
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                    data = Uri.parse("package:${activity.packageName}")
+                }
+                activity.startActivity(intent)
+            } catch (e: Exception) {
+                Log.e("TVVC", "Error launching ACTION_MANAGE_OVERLAY_PERMISSION", e)
+            }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun requestFullScreenIntentPermission() {
+            val activity = activityRef.get() ?: return
+            try {
+                if (Build.VERSION.SDK_INT >= 34) {
+                    val intent = Intent("android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT").apply {
+                        data = Uri.parse("package:${activity.packageName}")
+                    }
+                    activity.startActivity(intent)
+                }
+            } catch (e: Exception) {
+                Log.e("TVVC", "Error launching ACTION_MANAGE_USE_FULL_SCREEN_INTENT", e)
+            }
         }
     }
 

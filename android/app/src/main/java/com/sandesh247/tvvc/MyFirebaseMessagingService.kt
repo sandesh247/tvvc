@@ -29,22 +29,16 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             val callerName = remoteMessage.data["callerName"] ?: "Unknown Caller"
 
             if (action == "INCOMING_CALL" && !callId.isNullOrEmpty()) {
-                val serviceIntent = Intent(this, CallNotificationService::class.java).apply {
-                    putExtra("callId", callId)
-                    putExtra("callerId", callerId)
-                    putExtra("callerName", callerName)
-                }
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(serviceIntent)
-                    } else {
-                        startService(serviceIntent)
-                    }
-                } catch (e: Exception) {
-                    Log.e("TVVC", "Failed to start foreground service for incoming call", e)
-                }
+                Log.d("TVVC", "FCM received INCOMING_CALL action. Showing notification.")
+                showIncomingCallNotification(this, callId, callerId, callerName)
             } else if (action == "CANCEL_CALL") {
-                Log.d("TVVC", "FCM received CANCEL_CALL action. Stopping service.")
+                Log.d("TVVC", "FCM received CANCEL_CALL action. Stopping service and cancelling notification 101.")
+                try {
+                    val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    notificationManager.cancel(101)
+                } catch (e: Exception) {
+                    Log.e("TVVC", "Failed to cancel notification 101 on CANCEL_CALL", e)
+                }
                 try {
                     val serviceIntent = Intent(this, CallNotificationService::class.java)
                     stopService(serviceIntent)
@@ -95,15 +89,50 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 flags
             )
 
+            val answerIntent = Intent(context, MainActivity::class.java).apply {
+                action = "ANSWER_CALL"
+                putExtra("callId", callId)
+                putExtra("callerId", callerId)
+                putExtra("callerName", callerName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val answerPendingIntent = PendingIntent.getActivity(
+                context,
+                1,
+                answerIntent,
+                flags
+            )
+
+            val declineIntent = Intent(context, CallActionReceiver::class.java).apply {
+                action = "DECLINE_CALL"
+                putExtra("callId", callId)
+            }
+            val declinePendingIntent = PendingIntent.getBroadcast(
+                context,
+                2,
+                declineIntent,
+                flags
+            )
+
             val notificationBuilder = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle("Incoming Call")
                 .setContentText("Call from $callerName")
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
-                .setFullScreenIntent(fullScreenPendingIntent, true)
                 .setContentIntent(fullScreenPendingIntent)
                 .setAutoCancel(true)
+                .setOngoing(true)
+                .addAction(R.mipmap.ic_launcher, "Answer", answerPendingIntent)
+                .addAction(R.mipmap.ic_launcher, "Decline", declinePendingIntent)
+
+            if (Build.VERSION.SDK_INT >= 34) {
+                if (notificationManager.canUseFullScreenIntent()) {
+                    notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
+                }
+            } else {
+                notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
+            }
 
             notificationManager.notify(101, notificationBuilder.build())
         }

@@ -87,8 +87,7 @@ async function syncVersion() {
 
     console.log('Successfully synchronized minimum client version in Firestore.');
   } catch (error) {
-    console.error('Error synchronizing version:', error);
-    process.exit(1);
+    console.warn('Warning: Could not sync version to Firestore (continuing build):', error.message || error);
   }
 }
 
