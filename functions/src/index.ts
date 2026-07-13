@@ -22,6 +22,11 @@ interface AdminConfig {
   meteredAppName?: string;
   turnUsername?: string;
   turnCredential?: string;
+  minClientVersion?: string;
+}
+
+interface GetMinClientVersionResponse {
+  minClientVersion: string | null;
 }
 
 interface VerifyPinRequest {
@@ -352,6 +357,24 @@ export const getTurnCredentials = onCall<unknown, Promise<GetTurnCredentialsResp
   })();
 
   return pendingPromise;
+});
+
+/**
+ * Callable function: gets the minimum client version from admin/config.
+ */
+export const getMinClientVersion = onCall<unknown, Promise<GetMinClientVersionResponse>>(async (request) => {
+  try {
+    const configDoc = await db.doc("admin/config").get();
+    if (!configDoc.exists) {
+      return { minClientVersion: null };
+    }
+    const config = configDoc.data() as AdminConfig | undefined;
+    return { minClientVersion: config?.minClientVersion ?? null };
+  } catch (error) {
+    console.error("Error retrieving minimum client version:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    throw new HttpsError("internal", `Failed to retrieve minimum client version: ${message}`);
+  }
 });
 
 /**

@@ -15,27 +15,66 @@ class ErrorBoundary extends Component<Props, State> {
     error: null
   };
 
+  private timer: any = null;
+
   public static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
   }
 
+  public componentDidMount() {
+    this.timer = window.setTimeout(() => {
+      sessionStorage.removeItem('app_crash_count');
+    }, 5000);
+  }
+
+  public componentWillUnmount() {
+    if (this.timer) {
+      window.clearTimeout(this.timer);
+    }
+  }
+
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught error:', error, errorInfo);
+    const countStr = sessionStorage.getItem('app_crash_count');
+    const count = countStr ? parseInt(countStr, 10) : 0;
+    if (count < 3) {
+      const nextCount = count + 1;
+      sessionStorage.setItem('app_crash_count', String(nextCount));
+      window.location.reload();
+    }
   }
 
   public render() {
     if (this.state.hasError) {
+      const countStr = sessionStorage.getItem('app_crash_count');
+      const count = countStr ? parseInt(countStr, 10) : 0;
+
+      if (count < 3) {
+        return (
+          <div style={{ padding: '40px', color: 'var(--wa-text-light)', backgroundColor: 'var(--bg-main)', height: '100vh', boxSizing: 'border-box', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <p style={{ fontSize: '20px' }}>Reloading...</p>
+          </div>
+        );
+      }
+
       return (
         <div style={{ padding: '40px', color: 'var(--wa-red)', backgroundColor: 'var(--bg-main)', height: '100vh', boxSizing: 'border-box' }}>
           <h1>Something went wrong.</h1>
+          <p style={{ color: 'var(--wa-text-light)', marginTop: '10px' }}>
+            The application has crashed multiple times.
+          </p>
           <pre style={{ whiteSpace: 'pre-wrap', marginTop: '20px', color: 'var(--wa-text-light)' }}>
             {this.state.error?.toString()}
           </pre>
           <button 
-            onClick={() => window.location.reload()}
-            style={{ padding: '10px 20px', marginTop: '20px', backgroundColor: 'var(--wa-green)', color: 'white', border: 'none', borderRadius: '8px', fontSize: '16px' }}
+            onClick={() => {
+              localStorage.clear();
+              sessionStorage.clear();
+              window.location.reload();
+            }}
+            style={{ padding: '10px 20px', marginTop: '20px', backgroundColor: 'var(--wa-green)', color: 'white', border: 'none', borderRadius: '8px', fontSize: '16px', cursor: 'pointer' }}
           >
-            Reload App
+            Reset & Retry
           </button>
         </div>
       );

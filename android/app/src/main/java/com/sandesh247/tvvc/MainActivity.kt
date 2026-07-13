@@ -293,6 +293,16 @@ class MainActivity : ComponentActivity() {
             sharedPref.edit().putString("device_id", deviceId).apply()
             return deviceId
         }
+
+        @android.webkit.JavascriptInterface
+        fun getVersionName(): String {
+            return BuildConfig.VERSION_NAME
+        }
+
+        @android.webkit.JavascriptInterface
+        fun getVersionCode(): Int {
+            return BuildConfig.VERSION_CODE
+        }
     }
 
     override fun onBackPressed() {

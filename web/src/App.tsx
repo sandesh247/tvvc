@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
-import { auth, db } from './firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { auth, db, functions } from './firebase';
 import PinScreen from './components/PinScreen';
 import Registration from './components/Registration';
 import ContactList from './components/ContactList';
 import CallScreen from './components/CallScreen';
 import { collection, onSnapshot, doc, setDoc, getDoc, serverTimestamp, query, where } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 
 export interface User {
   id: string;
@@ -13,6 +14,8 @@ export interface User {
   lastSeen?: any; // Firestore Timestamp
   fcmToken?: string;
 }
+
+declare const __APP_VERSION__: string;
 
 declare global {
   interface Window {
@@ -24,11 +27,29 @@ declare global {
       setCallActive?: (active: boolean) => void;
       setSpeakerphoneOn?: (on: boolean) => void;
       getDeviceId?: () => string;
+      getVersionName?: () => string;
     };
     onCallCancelledBySystem?: () => void;
     handleIncomingCallIntent?: (callId: string, callerId: string) => void;
     hangUpCall?: () => void;
   }
+}
+
+export function isVersionCompatible(clientVer: string, minVer: string): boolean {
+  const parse = (v: string) => {
+    const parts = v.split('.').map(Number);
+    return [parts[0] || 0, parts[1] || 0, parts[2] || 0];
+  };
+  const [cMajor, cMinor, cPatch] = parse(clientVer);
+  const [mMajor, mMinor, mPatch] = parse(minVer);
+
+  if (cMajor !== mMajor) {
+    return cMajor > mMajor;
+  }
+  if (cMinor !== mMinor) {
+    return cMinor > mMinor;
+  }
+  return cPatch >= mPatch;
 }
 
 function App() {
@@ -39,6 +60,44 @@ function App() {
   const [activeCall, setActiveCall] = useState<{ remoteUserId: string; incoming: boolean; callId: string } | null>(null);
   const [profileLoading, setProfileLoading] = useState<boolean>(false);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [versionState, setVersionState] = useState<'checking' | 'compatible' | 'blocked'>('checking');
+
+  // Check version compatibility on mount
+  useEffect(() => {
+    const checkVersion = async () => {
+      try {
+        const getMinClientVersionFn = httpsCallable<unknown, { minClientVersion: string | null }>(
+          functions,
+          'getMinClientVersion'
+        );
+        const res = await getMinClientVersionFn();
+        const minVer = res.data?.minClientVersion;
+        if (minVer) {
+          const clientVer = window.AndroidBridge?.getVersionName?.() || __APP_VERSION__;
+          if (!isVersionCompatible(clientVer, minVer)) {
+            const reloaded = sessionStorage.getItem('version_blocked_reloaded');
+            if (!reloaded) {
+              localStorage.clear();
+              sessionStorage.clear();
+              sessionStorage.setItem('version_blocked_reloaded', 'true');
+              await signOut(auth);
+              window.location.reload();
+              return;
+            } else {
+              setVersionState('blocked');
+              return;
+            }
+          }
+        }
+        setVersionState('compatible');
+        sessionStorage.removeItem('version_blocked_reloaded');
+      } catch (err) {
+        console.error('Error checking version compatibility:', err);
+        setVersionState('compatible');
+      }
+    };
+    checkVersion();
+  }, []);
 
   // Helper to load user profile from Firestore
   const loadUserProfile = useCallback(async (uid: string) => {
@@ -236,10 +295,26 @@ function App() {
     setActiveCall(null);
   }, []);
 
-  // Determine if the app is currently loading (auth initialization or profile fetching)
-  const isAppLoading = authState === 'loading' || profileLoading;
+  // Determine if the app is currently loading (auth initialization, profile fetching, or version check)
+  const isAppLoading = authState === 'loading' || profileLoading || versionState === 'checking';
 
-  // Loading state while Firebase Auth initializes or profile is loading
+  // If app is blocked due to version incompatibility, show the blocker screen
+  if (versionState === 'blocked') {
+    return (
+      <div className="app-container">
+        <div className="content" style={{ justifyContent: 'center', alignItems: 'center' }}>
+          <div className="registration-container" style={{ textAlign: 'center' }}>
+            <h2 style={{ color: 'var(--wa-red)', fontSize: '32px', margin: 0 }}>Update Required</h2>
+            <p style={{ color: 'var(--wa-text-light)', fontSize: '20px', maxWidth: '480px', margin: '0 auto', marginTop: '16px' }}>
+              Your application version is no longer supported. Please update to the latest version to continue.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Loading state while Firebase Auth initializes, profile is loading, or version is checking
   if (isAppLoading) {
     return (
       <div className="app-container">

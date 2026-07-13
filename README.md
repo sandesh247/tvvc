@@ -14,6 +14,25 @@ A simple video calling app designed for family use on Android TVs. One family me
 
 ---
 
+## Version Compatibility Guard & Self-Healing Crash Reset
+
+To ensure that clients running the TVVC app (especially long-running TV installations) remain compatible with backend API/function changes, and self-heal in the event of persistent errors, TVVC implements the following guards:
+
+### 1. Version Compatibility Guard
+- **Firestore Document**: The document `/admin/config` in Firestore database `'default'` holds a `minClientVersion` (string) field.
+- **Auto-Sync during Build**: During the React build pipeline (`npm run build`), the script `scripts/sync-version.js` reads the package version from `web/package.json` and updates the `minClientVersion` field in Firestore REST API using the Firebase CLI OAuth access token.
+- **Client Enforcement**: On mount, the React Web App (`web/src/App.tsx`) calls the `getMinClientVersion` Cloud Function:
+  - If the client's current version (read from `window.AndroidBridge?.getVersionName()` or defaulting to `'1.1.15'`) is lower than `minClientVersion`, it clears `localStorage` and `sessionStorage`, signs out of Firebase, and reloads once.
+  - If the version remains incompatible after reloading, it blocks the application UI and displays a static **"Update Required"** blocker screen.
+
+### 2. Self-Healing Crash Reset
+- **Error Boundary**: React components are wrapped in an `ErrorBoundary` (`web/src/ErrorBoundary.tsx`) to catch unhandled errors.
+- **Reload Limit**: If the application crashes, the boundary automatically reloads the page (up to 3 times) using a counter stored in `sessionStorage` (`app_crash_count`).
+- **Reset & Retry Screen**: If the app crashes 3 or more times consecutively, it displays a static error screen with a **"Reset & Retry"** button. Clicking this button clears all local storage state (`localStorage` and `sessionStorage`) and reloads the application to recover from corrupt cached data.
+- **Heartbeat Recovery**: If the application mounts and runs successfully for 5 seconds without crashing, the crash count is cleared from `sessionStorage`.
+
+---
+
 ## Complete Step-by-Step Setup Guide
 
 Follow these steps to deploy the application from scratch.

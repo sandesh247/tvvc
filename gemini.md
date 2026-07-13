@@ -71,3 +71,24 @@ curl -X DELETE -H "Authorization: Bearer <ACCESS_TOKEN>" \
   https://firestore.googleapis.com/v1/projects/gh-tvvc/databases/default/documents/users/<DEVICE_ID>
 ```
 
+---
+
+## Version Compatibility Guard & Self-Healing Crash Reset Reference
+
+### 1. Version Guard Logic
+The app version compatibility guard automatically enforces updates.
+- **Web Package Version**: Handled in `web/package.json`.
+- **Backend Enforced Version**: Stored in Firestore database `'default'` at `/admin/config` as the `minClientVersion` field.
+- **Automatic Deployment/Sync**:
+  When you build the React frontend using `npm run build` inside `web/`, the script `node ../scripts/sync-version.js` executes first. It reads the current package version and calls the Firestore REST API using the local active Firebase CLI access token (from `~/.config/configstore/firebase-tools.json`) to update the minimum required version in the database.
+- **Rules on Client Version Update**:
+  If you increment the version in `web/package.json`, the next production build will automatically set this version as the minimum required version for all clients.
+
+### 2. Error Boundary & Crash Handling
+- **Crash Counter**: `sessionStorage.getItem('app_crash_count')`.
+- **Automatic Recovery**: If the application crashes before completing a 5-second successful run:
+  - If crash count < 3: increment the count and reload the page automatically.
+  - If crash count >= 3: stop reloading, render the error boundary page with a **"Reset & Retry"** button.
+- **Manual Reset**: The **"Reset & Retry"** button clears `localStorage` and `sessionStorage` completely, then reloads the page.
+- **Success Heartbeat**: After mounting and running successfully for 5 seconds, the application automatically clears the `app_crash_count` from `sessionStorage`.
+
