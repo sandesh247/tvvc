@@ -18,6 +18,7 @@ import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.sandesh247.tvvc.BuildConfig
 
 class MainActivity : ComponentActivity() {
@@ -396,6 +397,67 @@ class MainActivity : ComponentActivity() {
         @android.webkit.JavascriptInterface
         fun getVersionCode(): Int {
             return BuildConfig.VERSION_CODE
+        }
+
+        @android.webkit.JavascriptInterface
+        fun logError(message: String, stackTrace: String) {
+            android.util.Log.e("TVVC", "JS Error: $message\n$stackTrace")
+            try {
+                val crashlytics = FirebaseCrashlytics.getInstance()
+                crashlytics.setCustomKey("js_stacktrace", stackTrace)
+                val exception = Exception(message)
+                
+                // Parse stackTrace lines to reconstruct stackTraceElements
+                val lines = stackTrace.split("\n")
+                val stackElements = lines.mapNotNull { line ->
+                    try {
+                        val trimmed = line.trim()
+                        if (trimmed.startsWith("at ")) {
+                            val content = trimmed.substring(3)
+                            val hasOpen = content.contains('(')
+                            val hasClose = content.contains(')')
+                            if ((hasOpen && !hasClose) || (!hasOpen && hasClose)) {
+                                null
+                            } else {
+                                val parenStart = content.indexOf('(')
+                                val parenEnd = content.indexOf(')')
+                                if (hasOpen && hasClose && parenEnd < parenStart) {
+                                    null
+                                } else {
+                                    val (func, filePart) = if (parenStart != -1 && parenEnd != -1) {
+                                        Pair(content.substring(0, parenStart).trim(), content.substring(parenStart + 1, parenEnd).trim())
+                                    } else {
+                                        Pair("anonymous", content)
+                                    }
+                                    val parts = filePart.split(":")
+                                    if (parts.size >= 2) {
+                                        val lineNumber = parts[parts.size - 2].toIntOrNull() ?: 0
+                                        val fileName = parts.subList(0, parts.size - 2).joinToString(":").substringAfterLast("/")
+                                        val cleanFileName = fileName.trim()
+                                        if (cleanFileName.isNotBlank() && !cleanFileName.contains('(') && !cleanFileName.contains(')') && !cleanFileName.contains(':') && !cleanFileName.contains('[') && !cleanFileName.contains(']')) {
+                                            StackTraceElement("JavaScript", func, cleanFileName, lineNumber)
+                                        } else {
+                                            null
+                                        }
+                                    } else {
+                                        null
+                                    }
+                                }
+                            }
+                        } else {
+                            null
+                        }
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                if (stackElements.isNotEmpty()) {
+                    exception.stackTrace = stackElements.toTypedArray()
+                }
+                crashlytics.recordException(exception)
+            } catch (e: Exception) {
+                android.util.Log.e("TVVC", "Failed to record JS exception in Crashlytics", e)
+            }
         }
 
         @android.webkit.JavascriptInterface

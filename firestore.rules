@@ -33,5 +33,16 @@ service cloud.firestore {
          callId.matches('^[a-zA-Z0-9-_]+_' + request.auth.uid + '$') ||
          callId.matches('^[a-zA-Z0-9-_]+_' + request.auth.uid + '_[a-zA-Z0-9-_]+$'));
     }
+
+    // Client errors — write-only collection for client-side crash/error logs.
+    match /client_errors/{docId} {
+      allow create: if request.resource.data.message is string &&
+                      request.resource.data.stack is string &&
+                      request.resource.data.timestamp is timestamp &&
+                      request.resource.data.userAgent is string &&
+                      request.resource.data.appVersion is string &&
+                      (request.resource.data.context == null || request.resource.data.context is string);
+      allow read, update, delete: if false;
+    }
   }
 }

@@ -17,12 +17,14 @@ TVVC is a cross-platform video calling application built with React (Web), Andro
 | 5 | Integration & Verification | Refine JS-Native integration bridge and perform final compilation checks | M4 | DONE |
 | 6 | Stable Device ID Integration | Implement stable native device identifier (Android's secure ANDROID_ID via AndroidBridge) in Android and Web apps, build both platforms | M5 | DONE |
 | 7 | Background Call Reception & Token Cleanup | Immediate foreground service on FCM, unified notification with Answer/Decline, FCM TTL, and stale token GC in Functions | M6 | DONE |
+| 8 | Firebase Error Logging | Configure Android Crashlytics, Web Firestore Logger, rules for /client_errors | M7 | DONE |
 
 ## Interface Contracts
 ### React Web ↔ Android Native Bridge
 - **`window.AndroidBridge.syncUid(uid: string)`**: Synchronizes user ID to native side when auth state changes (no polling).
 - **`window.AndroidBridge.getFcmToken()`**: Deprecated. Native app will inject FCM token directly.
 - **`window.AndroidBridge.getDeviceId()`**: Returns the device's secure ANDROID_ID hex string, or falls back to a locally persisted UUID.
+- **`window.AndroidBridge.logError(message: string, stackTrace: string)`**: Forwards a JavaScript exception from the WebView to native Firebase Crashlytics as a non-fatal error.
 - **`window.handleFcmToken(token: string)`**: JS function invoked by native app when FCM token is registered or page loads.
 - **`window.handleIncomingCallIntent(callId: string, callerId: string)`**: JS function invoked by native app when user clicks call notification while app is already running.
 
@@ -36,3 +38,4 @@ TVVC is a cross-platform video calling application built with React (Web), Andro
 - `/calls/{callId}`: WebRTC call document.
 - `/calls/{callId}/callerCandidates/{candidateId}`: ICE candidates sent by caller.
 - `/calls/{callId}/calleeCandidates/{candidateId}`: ICE candidates sent by callee.
+- `/client_errors/{errorId}`: Publicly writeable (create-only) error log containing `message`, `stack`, `timestamp`, `userAgent`, and `appVersion`.

@@ -30,6 +30,7 @@ declare global {
       getVersionName?: () => string;
       getFcmToken?: () => string | null;
       onAppReady?: () => void;
+      logError?: (message: string, stackTrace: string) => void;
     };
     onCallCancelledBySystem?: () => void;
     handleIncomingCallIntent?: (callId: string, callerId: string, autoAnswer?: boolean) => void;

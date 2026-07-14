@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { logErrorToFirebase } from './utils/logger';
 
 interface Props {
   children?: ReactNode;
@@ -37,10 +38,17 @@ class ErrorBoundary extends Component<Props, State> {
     console.error('Uncaught error:', error, errorInfo);
     const countStr = sessionStorage.getItem('app_crash_count');
     const count = countStr ? parseInt(countStr, 10) : 0;
+
+    const logPromise = logErrorToFirebase(error, 'ErrorBoundary');
+
     if (count < 3) {
       const nextCount = count + 1;
       sessionStorage.setItem('app_crash_count', String(nextCount));
-      window.location.reload();
+      
+      const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 1000));
+      Promise.race([logPromise, timeoutPromise]).finally(() => {
+        window.location.reload();
+      });
     }
   }
 

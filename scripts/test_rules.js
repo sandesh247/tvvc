@@ -167,6 +167,41 @@ const runTests = async () => {
     return resWrite.status === 403 && resRead.status === 403;
   });
 
+  // Scenario 10 (Positive): Anyone can create a valid client error log (write-only)
+  await runScenario("Scenario 10 (Positive): Anyone can create a valid client error log", async () => {
+    const resWrite = await request('PATCH', '/client_errors/err1', null, {
+      fields: {
+        message: { stringValue: 'Test error message' },
+        stack: { stringValue: 'Test stack trace' },
+        timestamp: { timestampValue: new Date().toISOString() },
+        userAgent: { stringValue: 'TestUserAgent' },
+        appVersion: { stringValue: '1.1.20' },
+        context: { stringValue: 'window.onerror' }
+      }
+    });
+    return resWrite.status === 200;
+  });
+
+  // Scenario 11 (Negative): Anyone CANNOT read a client error log
+  await runScenario("Scenario 11 (Negative): Anyone CANNOT read a client error log", async () => {
+    const resRead = await request('GET', '/client_errors/err1', null);
+    return resRead.status === 403;
+  });
+
+  // Scenario 12 (Negative): Create fails with invalid type/structure
+  await runScenario("Scenario 12 (Negative): Create fails with invalid type structure", async () => {
+    const resWrite = await request('PATCH', '/client_errors/err2', null, {
+      fields: {
+        message: { integerValue: 12345 }, // message is integer, not string
+        stack: { stringValue: 'Test stack trace' },
+        timestamp: { timestampValue: new Date().toISOString() },
+        userAgent: { stringValue: 'TestUserAgent' },
+        appVersion: { stringValue: '1.1.20' }
+      }
+    });
+    return resWrite.status === 403;
+  });
+
   if (pass) {
     console.log("All validation tests passed successfully!");
     process.exit(0);
