@@ -22,16 +22,23 @@ service cloud.firestore {
     // Calls — restricted to caller or callee.
     match /calls/{callId} {
       allow create: if request.auth != null && request.resource.data.callerId == request.auth.uid;
-      allow read, update, delete: if request.auth != null &&
+      // Allow read if resource == null to permit `get()` checks in Firestore transactions during call initiation.
+      // Otherwise, restrict read to the caller or callee.
+      allow read: if request.auth != null && (resource == null || resource.data.callerId == request.auth.uid || resource.data.calleeId == request.auth.uid);
+      allow update, delete: if request.auth != null &&
         (resource.data.callerId == request.auth.uid || resource.data.calleeId == request.auth.uid);
     }
 
+    // Call subcollections (ICE candidates for WebRTC signaling).
     match /calls/{callId}/{subcol}/{docId} {
+      // The hyphen '-' in the character class must be placed at the end: `[a-zA-Z0-9_-]`
+      // If placed in the middle like `[a-zA-Z0-9-_]`, RE2 interprets it as a range from '9' to '_',
+      // which excludes the literal '-' and causes UUIDs (which contain hyphens) to fail the check.
       allow read, write: if request.auth != null &&
-        request.auth.uid.matches('^[a-zA-Z0-9-]+$') &&
-        (callId.matches('^' + request.auth.uid + '_[a-zA-Z0-9-_]+$') || 
-         callId.matches('^[a-zA-Z0-9-_]+_' + request.auth.uid + '$') ||
-         callId.matches('^[a-zA-Z0-9-_]+_' + request.auth.uid + '_[a-zA-Z0-9-_]+$'));
+        request.auth.uid.matches('^[a-zA-Z0-9_-]+$') &&
+        (callId.matches('^' + request.auth.uid + '_[a-zA-Z0-9_-]+$') || 
+         callId.matches('^[a-zA-Z0-9_-]+_' + request.auth.uid + '$') ||
+         callId.matches('^[a-zA-Z0-9_-]+_' + request.auth.uid + '_[a-zA-Z0-9_-]+$'));
     }
 
     // Client errors — write-only collection for client-side crash/error logs.
