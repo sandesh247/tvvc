@@ -15,6 +15,13 @@ class CallActionReceiver : BroadcastReceiver() {
         Log.d("TVVC", "CallActionReceiver received action: $action, callId: $callId")
         if (action == "DECLINE_CALL" && !callId.isNullOrEmpty()) {
             try {
+                val serviceIntent = Intent(context, CallNotificationService::class.java)
+                context.stopService(serviceIntent)
+            } catch (e: Exception) {
+                Log.e("TVVC", "Failed to stop CallNotificationService", e)
+            }
+
+            try {
                 // Cancel notification 101
                 val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 notificationManager.cancel(101)

@@ -148,14 +148,53 @@ export const onCallCreated = onDocumentCreated({
       },
       android: {
         priority: "high" as const,
+        ttl: 30000,
       },
     };
 
     try {
       await admin.messaging().send(message);
       console.log("Successfully sent FCM message");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error sending message via FCM:", error);
+      const errorCode = error?.code;
+      const errorMessage = error?.message || "";
+      const isStaleToken = errorCode === "messaging/invalid-registration-token" ||
+        errorCode === "messaging/registration-token-not-registered" ||
+        errorCode === "messaging/invalid-argument" ||
+        errorMessage.includes("registration-token-not-registered");
+
+      if (isStaleToken) {
+        console.log(`Stale token detected for user ${calleeId}. Transactionally cleaning up.`);
+        try {
+          const userRef = db.collection("users").doc(calleeId);
+          const secretsRef = userRef.collection("private").doc("secrets");
+          await db.runTransaction(async (transaction) => {
+            const userSnap = await transaction.get(userRef);
+            const secretsSnap = await transaction.get(secretsRef);
+            
+            const updates: { [key: string]: any } = {};
+            if (userSnap.exists && userSnap.data()?.fcmToken === fcmToken) {
+              updates.fcmToken = admin.firestore.FieldValue.delete();
+            }
+            
+            const secretsUpdates: { [key: string]: any } = {};
+            if (secretsSnap.exists && secretsSnap.data()?.fcmToken === fcmToken) {
+              secretsUpdates.fcmToken = admin.firestore.FieldValue.delete();
+            }
+
+            if (Object.keys(updates).length > 0) {
+              transaction.update(userRef, updates);
+            }
+            if (Object.keys(secretsUpdates).length > 0) {
+              transaction.update(secretsRef, secretsUpdates);
+            }
+          });
+          console.log(`Successfully completed transactional stale token cleanup for user ${calleeId}`);
+        } catch (txError) {
+          console.error("Error running transactional token cleanup:", txError);
+        }
+      }
     }
   } catch (error) {
     console.error("Error fetching callee profile or dispatching FCM notification:", error);

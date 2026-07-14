@@ -29,6 +29,7 @@ declare global {
       getDeviceId?: () => string;
       getVersionName?: () => string;
       getFcmToken?: () => string | null;
+      onAppReady?: () => void;
     };
     onCallCancelledBySystem?: () => void;
     handleIncomingCallIntent?: (callId: string, callerId: string, autoAnswer?: boolean) => void;
@@ -170,6 +171,8 @@ function App() {
       const shouldAutoAnswer = autoAnswer === true || (autoAnswer as any) === 'true';
       handleIncomingCall(callerId, callId, shouldAutoAnswer);
     };
+
+    window.AndroidBridge?.onAppReady?.();
   }, [handleIncomingCall]);
 
   // Sync FCM token to Firestore when it changes

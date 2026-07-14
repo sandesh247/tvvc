@@ -77,17 +77,52 @@ class CallNotificationService : Service() {
             pendingIntentFlags
         )
 
-        val notification = NotificationCompat.Builder(this, channelId)
+        val answerIntent = Intent(this, MainActivity::class.java).apply {
+            action = "ANSWER_CALL"
+            putExtra("callId", callId)
+            putExtra("callerId", callerId)
+            putExtra("callerName", callerName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val answerPendingIntent = PendingIntent.getActivity(
+            this,
+            1,
+            answerIntent,
+            pendingIntentFlags
+        )
+
+        val declineIntent = Intent(this, CallActionReceiver::class.java).apply {
+            action = "DECLINE_CALL"
+            putExtra("callId", callId)
+        }
+        val declinePendingIntent = PendingIntent.getBroadcast(
+            this,
+            2,
+            declineIntent,
+            pendingIntentFlags
+        )
+
+        val notificationBuilder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Incoming Call")
             .setContentText("Call from $callerName")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(fullScreenPendingIntent, true)
             .setContentIntent(fullScreenPendingIntent)
             .setAutoCancel(true)
             .setOngoing(true)
-            .build()
+            .addAction(R.mipmap.ic_launcher, "Answer", answerPendingIntent)
+            .addAction(R.mipmap.ic_launcher, "Decline", declinePendingIntent)
+
+        if (Build.VERSION.SDK_INT >= 34) {
+            if (notificationManager.canUseFullScreenIntent()) {
+                notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
+            }
+        } else {
+            notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
+        }
+
+        val notification = notificationBuilder.build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
@@ -99,21 +134,15 @@ class CallNotificationService : Service() {
         try {
             val app = FirebaseApp.getInstance()
             val db = FirebaseFirestore.getInstance(app, BuildConfig.FIRESTORE_DATABASE_ID)
-            var hasExisted = false
             callListener = db.collection("calls").document(callId)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         Log.e("TVVC", "Firestore listener error", error)
                         return@addSnapshotListener
                     }
-                    if (snapshot != null && snapshot.exists()) {
-                        hasExisted = true
-                    } else if (snapshot != null && !snapshot.exists()) {
-                        val isFromCache = snapshot.metadata.isFromCache
-                        if (hasExisted && !isFromCache) {
-                            Log.d("TVVC", "Call document was deleted/cancelled. Stopping service.")
-                            stopSelf()
-                        }
+                    if (snapshot != null && !snapshot.exists() && !snapshot.metadata.isFromCache) {
+                        Log.d("TVVC", "Call document does not exist on the server. Stopping service.")
+                        stopSelf()
                     }
                 }
         } catch (e: Exception) {
@@ -123,13 +152,18 @@ class CallNotificationService : Service() {
         return START_NOT_STICKY
     }
 
-
     override fun onDestroy() {
         Log.d("TVVC", "CallNotificationService onDestroy")
         try {
             callListener?.remove()
         } catch (e: Exception) {
             Log.e("TVVC", "Error removing Firestore listener", e)
+        }
+        try {
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.cancel(101)
+        } catch (e: Exception) {
+            Log.e("TVVC", "Error cancelling notification 101", e)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)

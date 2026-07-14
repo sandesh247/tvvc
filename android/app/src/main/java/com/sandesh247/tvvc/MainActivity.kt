@@ -27,6 +27,7 @@ class MainActivity : ComponentActivity() {
     private var isPageLoaded = false
     private var isCallActive = false
     private var pendingCallAction: String? = null
+    private var isAppReady = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,11 +90,6 @@ class MainActivity : ComponentActivity() {
                 super.onPageFinished(view, url)
                 isPageLoaded = true
                 injectTokenIfAvailable()
-                pendingCallAction?.let { js ->
-                    Log.d("TVVC", "Evaluating pending call action: $js")
-                    webView.evaluateJavascript("if (window.handleIncomingCallIntent) { $js; }", null)
-                    pendingCallAction = null
-                }
                 view?.post {
                     view.requestFocus()
                 }
@@ -185,46 +181,37 @@ class MainActivity : ComponentActivity() {
                 Log.e("TVVC", "Failed to cancel notification 101", e)
             }
 
-            val serviceIntent = Intent(this, CallNotificationService::class.java).apply {
-                putExtra("callId", callId)
-                putExtra("callerId", callerId)
-            }
+            val serviceIntent = Intent(this, CallNotificationService::class.java)
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent)
-                } else {
-                    startService(serviceIntent)
-                }
+                stopService(serviceIntent)
             } catch (e: Exception) {
-                Log.e("TVVC", "Failed to start CallNotificationService", e)
+                Log.e("TVVC", "Failed to stop CallNotificationService", e)
             }
 
-            if (!isPageLoaded) {
+            if (!isAppReady) {
                 pendingCallAction = "window.handleIncomingCallIntent('$callId', '${callerId ?: ""}', true)"
-                webView.loadUrl(BuildConfig.WEB_APP_URL)
+                if (!isPageLoaded) {
+                    webView.loadUrl(BuildConfig.WEB_APP_URL)
+                }
             } else {
-                Log.d("TVVC", "Page already loaded, evaluating handleIncomingCallIntent via JS with autoAnswer=true.")
+                Log.d("TVVC", "App ready, evaluating handleIncomingCallIntent via JS with autoAnswer=true.")
                 runOnUiThread {
-                    webView.evaluateJavascript(
-                        "if (window.handleIncomingCallIntent) { window.handleIncomingCallIntent('$callId', '${callerId ?: ""}', true); }",
-                        null
-                    )
+                    webView.evaluateJavascript("window.handleIncomingCallIntent('$callId', '${callerId ?: ""}', true);", null)
                 }
             }
             return
         }
 
         if (action == "INCOMING_CALL" && !callId.isNullOrEmpty()) {
-            if (!isPageLoaded) {
+            if (!isAppReady) {
                 pendingCallAction = "window.handleIncomingCallIntent('$callId', '${callerId ?: ""}', false)"
-                webView.loadUrl(BuildConfig.WEB_APP_URL)
+                if (!isPageLoaded) {
+                    webView.loadUrl(BuildConfig.WEB_APP_URL)
+                }
             } else {
-                Log.d("TVVC", "Page already loaded, evaluating handleIncomingCallIntent via JS.")
+                Log.d("TVVC", "App ready, evaluating handleIncomingCallIntent via JS with autoAnswer=false.")
                 runOnUiThread {
-                    webView.evaluateJavascript(
-                        "if (window.handleIncomingCallIntent) { window.handleIncomingCallIntent('$callId', '${callerId ?: ""}'); }",
-                        null
-                    )
+                    webView.evaluateJavascript("window.handleIncomingCallIntent('$callId', '${callerId ?: ""}', false);", null)
                 }
             }
         } else {
@@ -246,6 +233,14 @@ class MainActivity : ComponentActivity() {
                 }
             """.trimIndent()
             webView.evaluateJavascript(js, null)
+        }
+    }
+
+    private fun triggerPendingCallAction() {
+        pendingCallAction?.let { js ->
+            Log.d("TVVC", "Evaluating pending call action: $js")
+            webView.evaluateJavascript("if (window.handleIncomingCallIntent) { $js; }", null)
+            pendingCallAction = null
         }
     }
 
@@ -272,6 +267,16 @@ class MainActivity : ComponentActivity() {
         fun getFcmToken(): String? {
             val activity = activityRef.get() ?: return null
             return activity.fcmToken
+        }
+
+        @android.webkit.JavascriptInterface
+        fun onAppReady() {
+            val activity = activityRef.get() ?: return
+            Log.d("TVVC", "onAppReady called from JS Bridge")
+            activity.runOnUiThread {
+                activity.isAppReady = true
+                activity.triggerPendingCallAction()
+            }
         }
 
         @android.webkit.JavascriptInterface

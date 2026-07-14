@@ -29,8 +29,17 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             val callerName = remoteMessage.data["callerName"] ?: "Unknown Caller"
 
             if (action == "INCOMING_CALL" && !callId.isNullOrEmpty()) {
-                Log.d("TVVC", "FCM received INCOMING_CALL action. Showing notification.")
-                showIncomingCallNotification(this, callId, callerId, callerName)
+                Log.d("TVVC", "FCM received INCOMING_CALL action. Starting service.")
+                val serviceIntent = Intent(this, CallNotificationService::class.java).apply {
+                    putExtra("callId", callId)
+                    putExtra("callerId", callerId)
+                    putExtra("callerName", callerName)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
             } else if (action == "CANCEL_CALL") {
                 Log.d("TVVC", "FCM received CANCEL_CALL action. Stopping service and cancelling notification 101.")
                 try {
@@ -51,92 +60,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
-    companion object {
-        fun showIncomingCallNotification(context: Context, callId: String, callerId: String?, callerName: String) {
-            val channelId = "incoming_calls"
-            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val name = "Incoming Calls"
-                val descriptionText = "Notifications for incoming calls"
-                val importance = NotificationManager.IMPORTANCE_HIGH
-                val channel = NotificationChannel(channelId, name, importance).apply {
-                    description = descriptionText
-                    enableLights(true)
-                    enableVibration(true)
-                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                }
-                notificationManager.createNotificationChannel(channel)
-            }
-
-            val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
-                setAction("INCOMING_CALL")
-                putExtra("callId", callId)
-                putExtra("callerId", callerId)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            }
-
-            val flags = if (Build.VERSION.SDK_INT >= 23) {
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            } else {
-                PendingIntent.FLAG_UPDATE_CURRENT
-            }
-
-            val fullScreenPendingIntent = PendingIntent.getActivity(
-                context,
-                0,
-                fullScreenIntent,
-                flags
-            )
-
-            val answerIntent = Intent(context, MainActivity::class.java).apply {
-                action = "ANSWER_CALL"
-                putExtra("callId", callId)
-                putExtra("callerId", callerId)
-                putExtra("callerName", callerName)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            }
-            val answerPendingIntent = PendingIntent.getActivity(
-                context,
-                1,
-                answerIntent,
-                flags
-            )
-
-            val declineIntent = Intent(context, CallActionReceiver::class.java).apply {
-                action = "DECLINE_CALL"
-                putExtra("callId", callId)
-            }
-            val declinePendingIntent = PendingIntent.getBroadcast(
-                context,
-                2,
-                declineIntent,
-                flags
-            )
-
-            val notificationBuilder = NotificationCompat.Builder(context, channelId)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle("Incoming Call")
-                .setContentText("Call from $callerName")
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setCategory(NotificationCompat.CATEGORY_CALL)
-                .setContentIntent(fullScreenPendingIntent)
-                .setAutoCancel(true)
-                .setOngoing(true)
-                .addAction(R.mipmap.ic_launcher, "Answer", answerPendingIntent)
-                .addAction(R.mipmap.ic_launcher, "Decline", declinePendingIntent)
-
-            if (Build.VERSION.SDK_INT >= 34) {
-                if (notificationManager.canUseFullScreenIntent()) {
-                    notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
-                }
-            } else {
-                notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
-            }
-
-            notificationManager.notify(101, notificationBuilder.build())
-        }
-    }
 
     /**
      * Called when the FCM registration token is refreshed (e.g. on token rotation or

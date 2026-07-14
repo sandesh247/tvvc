@@ -16,6 +16,7 @@ TVVC is a cross-platform video calling application built with React (Web), Andro
 | 4 | Android Native App | Fix F-03 (Foreground service catch/priority), F-04 (handleIncomingCallIntent JS bridge), F-08 (Remove cancel_call disruptive launch), F-13 (WebView memory leak/onDestroy), F-15 (AudioManager speakerphone), F-16 (TV Remote back button confirm), F-17 (Autofocus optional), F-18 (Picture-in-Picture support) | M3 | DONE |
 | 5 | Integration & Verification | Refine JS-Native integration bridge and perform final compilation checks | M4 | DONE |
 | 6 | Stable Device ID Integration | Implement stable native device identifier (Android's secure ANDROID_ID via AndroidBridge) in Android and Web apps, build both platforms | M5 | DONE |
+| 7 | Background Call Reception & Token Cleanup | Immediate foreground service on FCM, unified notification with Answer/Decline, FCM TTL, and stale token GC in Functions | M6 | DONE |
 
 ## Interface Contracts
 ### React Web ↔ Android Native Bridge
