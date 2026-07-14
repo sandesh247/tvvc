@@ -23,6 +23,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [calleeUnavailable, setCalleeUnavailable] = useState(false);
+  const [isWebRTCReady, setIsWebRTCReady] = useState(false);
   const actionButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -56,6 +57,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
   const isRemoteDescriptionSet = useRef(false);
   const queuedCandidates = useRef<RTCIceCandidate[]>([]);
   const ringingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingAutoAnswer = useRef(false);
 
   const callDocId = callId;
 
@@ -227,7 +229,11 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
   }, [hangup]);
 
   const answerCall = useCallback(async () => {
-    if (!pc.current) return;
+    if (!pc.current) {
+      console.log('pc.current not ready, queueing answer');
+      pendingAutoAnswer.current = true;
+      return;
+    }
     if (isCancelled.current) return;
 
     // Fix callee camera privacy leak: only request media stream and add tracks on explicit accept
@@ -337,10 +343,14 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
   }, [callDoc, hangup, addOrQueueCandidate, flushQueuedCandidates]);
 
   useEffect(() => {
-    if (isIncoming && callState === 'ringing' && autoAnswer) {
-      answerCall();
+    if (isIncoming && callState === 'ringing') {
+      if (autoAnswer || pendingAutoAnswer.current) {
+        if (isWebRTCReady) {
+          answerCall();
+        }
+      }
     }
-  }, [isIncoming, callState, autoAnswer, answerCall]);
+  }, [isIncoming, callState, autoAnswer, answerCall, isWebRTCReady]);
 
   const startCall = useCallback(async () => {
     if (!pc.current) return;
@@ -544,9 +554,16 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
 
       pc.current.ontrack = (event) => {
         if (isCancelled.current) return;
-        event.streams[0].getTracks().forEach((track) => {
-          remoteStream.current?.addTrack(track);
-        });
+        if (event.streams && event.streams[0]) {
+          if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== event.streams[0]) {
+            remoteVideoRef.current.srcObject = event.streams[0];
+          }
+        } else {
+          remoteStream.current?.addTrack(event.track);
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream.current;
+          }
+        }
       };
 
       if (!isIncoming) {
@@ -571,6 +588,8 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
 
         await startCall();
       }
+
+      setIsWebRTCReady(true);
     };
 
     setupWebRTC();
@@ -599,11 +618,11 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
         <div className="incoming-overlay">
           <div className="caller-name">Incoming Call from {remoteUserName}...</div>
           <div className="incoming-controls">
+            <button ref={actionButtonRef} className={`control-btn answer ${!isWebRTCReady ? 'disabled' : ''}`} onClick={answerCall} disabled={!isWebRTCReady} autoFocus>
+              <Phone size={40} />
+            </button>
             <button className="control-btn end" onClick={hangup}>
               <PhoneOff size={40} />
-            </button>
-            <button ref={actionButtonRef} className="control-btn answer" onClick={answerCall} autoFocus>
-              <Phone size={40} />
             </button>
           </div>
         </div>
