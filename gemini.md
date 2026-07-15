@@ -10,6 +10,9 @@ This file contains instructions for any AI assistant working on the **TVVC** pro
 > 1. Increment `versionCode` by `1` (integer) in [build.gradle.kts](file:///Users/sandesh247/github/tvvc/tvvc/android/app/build.gradle.kts).
 > 2. Increment the `version` field in [package.json](file:///Users/sandesh247/github/tvvc/tvvc/web/package.json) (which `build.gradle.kts` parses automatically for the `versionName`).
 
+> [!NOTE]
+> **Deployment Analysis Strategy**: At the end of a session, evaluate what parts of the project were modified (e.g., the web app, the native Android app, or Firestore functions). Based on this analysis, determine what needs to be built or deployed. For example, purely web-based changes deployed to Firebase Hosting are automatically picked up by the Android WebView clients without a new native build, whereas native Android or bridging changes require a new `.aab`/`.apk` release. **Always explicitly inform the user of your deployment decisions and provide a rationale for what you chose to build/deploy.**
+
 ### Code Locations
 1. **versionCode**: Modify `versionCode` inside `defaultConfig` in [build.gradle.kts](file:///Users/sandesh247/github/tvvc/tvvc/android/app/build.gradle.kts#L20-L31):
 ```kotlin
