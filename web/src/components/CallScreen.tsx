@@ -31,7 +31,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
       actionButtonRef.current?.focus();
     }, 100);
     return () => clearTimeout(timer);
-  }, [callState, isIncoming]);
+  }, [callState, isIncoming, isWebRTCReady]);
 
   // Fetch the remote user's display name
   useEffect(() => {

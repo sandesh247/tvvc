@@ -52,12 +52,60 @@ body {
   flex-direction: column;
 }
 
-/* TV Specific Styles & Focus Ring */
+/* TV Specific Styles & Focus Ring Animations */
+@keyframes focus-pulse-green {
+  0% {
+    box-shadow: 0 0 0 4px #05070c, 0 0 0 8px #ffffff, 0 0 10px 4px rgba(16, 185, 129, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 4px #05070c, 0 0 0 8px #ffffff, 0 0 25px 12px rgba(16, 185, 129, 0.95);
+  }
+  100% {
+    box-shadow: 0 0 0 4px #05070c, 0 0 0 8px #ffffff, 0 0 10px 4px rgba(16, 185, 129, 0.5);
+  }
+}
+
+@keyframes focus-pulse-red {
+  0% {
+    box-shadow: 0 0 0 4px #05070c, 0 0 0 8px #ffffff, 0 0 10px 4px rgba(239, 68, 68, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 4px #05070c, 0 0 0 8px #ffffff, 0 0 25px 12px rgba(239, 68, 68, 0.95);
+  }
+  100% {
+    box-shadow: 0 0 0 4px #05070c, 0 0 0 8px #ffffff, 0 0 10px 4px rgba(239, 68, 68, 0.5);
+  }
+}
+
+@keyframes focus-pulse-blue {
+  0% {
+    box-shadow: 0 0 0 4px #05070c, 0 0 0 8px #ffffff, 0 0 10px 4px rgba(59, 130, 246, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 4px #05070c, 0 0 0 8px #ffffff, 0 0 25px 12px rgba(59, 130, 246, 0.95);
+  }
+  100% {
+    box-shadow: 0 0 0 4px #05070c, 0 0 0 8px #ffffff, 0 0 10px 4px rgba(59, 130, 246, 0.5);
+  }
+}
+
+@keyframes focus-pulse-general {
+  0% {
+    box-shadow: 0 0 0 3px var(--bg-main), 0 0 0 6px #ffffff, 0 0 8px 3px var(--primary-glow);
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--bg-main), 0 0 0 6px #ffffff, 0 0 18px 8px var(--primary);
+  }
+  100% {
+    box-shadow: 0 0 0 3px var(--bg-main), 0 0 0 6px #ffffff, 0 0 8px 3px var(--primary-glow);
+  }
+}
+
 button:focus, input:focus, .contact-item:focus {
   outline: none !important;
-  border-color: var(--primary) !important;
-  box-shadow: 0 0 0 4px var(--primary-glow) !important;
+  border-color: #ffffff !important;
   background-color: var(--bg-card-hover) !important;
+  animation: focus-pulse-general 1.5s infinite ease-in-out !important;
 }
 
 .app-container {
@@ -158,9 +206,14 @@ button:focus, input:focus, .contact-item:focus {
   box-shadow: 0 4px 12px var(--primary-glow);
 }
 
-.btn:hover, .btn:focus {
+.btn:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+}
+
+.btn:focus {
+  transform: translateY(-2px) !important;
+  outline: none !important;
 }
 
 .btn:active {
@@ -352,9 +405,14 @@ button:focus, input:focus, .contact-item:focus {
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
 }
 
-.control-btn:hover, .control-btn:focus {
+.control-btn:hover {
   transform: translateY(-4px) scale(1.05);
   outline: none;
+}
+
+.control-btn:focus {
+  transform: translateY(-4px) scale(1.1) !important;
+  outline: none !important;
 }
 
 .control-btn:active {
@@ -366,8 +424,12 @@ button:focus, input:focus, .contact-item:focus {
   box-shadow: 0 8px 20px rgba(239, 68, 68, 0.4);
 }
 
-.control-btn.end:hover, .control-btn.end:focus {
+.control-btn.end:hover {
   box-shadow: 0 12px 25px rgba(239, 68, 68, 0.6);
+}
+
+.control-btn.end:focus {
+  animation: focus-pulse-red 1.5s infinite ease-in-out !important;
 }
 
 .control-btn.answer {
@@ -375,8 +437,12 @@ button:focus, input:focus, .contact-item:focus {
   box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4);
 }
 
-.control-btn.answer:hover, .control-btn.answer:focus {
+.control-btn.answer:hover {
   box-shadow: 0 12px 25px rgba(16, 185, 129, 0.6);
+}
+
+.control-btn.answer:focus {
+  animation: focus-pulse-green 1.5s infinite ease-in-out !important;
 }
 
 .incoming-overlay {
@@ -478,12 +544,20 @@ button:focus, input:focus, .contact-item:focus {
   color: var(--text-main);
 }
 
-.pin-key:hover, .pin-key:focus {
+.pin-key:hover {
   background-color: rgba(255, 255, 255, 0.1);
   border-color: var(--primary);
   transform: scale(1.08);
   box-shadow: 0 0 15px var(--primary-glow);
   outline: none;
+}
+
+.pin-key:focus {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: #ffffff !important;
+  transform: scale(1.12) !important;
+  outline: none !important;
+  animation: focus-pulse-green 1.5s infinite ease-in-out !important;
 }
 
 .pin-key:active {
@@ -708,8 +782,13 @@ button:focus, input:focus, .contact-item:focus {
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.control-btn.toggle:hover, .control-btn.toggle:focus {
+.control-btn.toggle:hover {
   background: rgba(255, 255, 255, 0.25);
+}
+
+.control-btn.toggle:focus {
+  background: rgba(255, 255, 255, 0.25) !important;
+  animation: focus-pulse-blue 1.5s infinite ease-in-out !important;
 }
 
 .control-btn.toggle.off {
