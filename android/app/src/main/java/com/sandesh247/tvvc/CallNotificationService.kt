@@ -12,6 +12,8 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import android.media.AudioAttributes
+import android.provider.Settings
 import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
@@ -48,11 +50,16 @@ class CallNotificationService : Service() {
             val name = "Incoming Calls"
             val descriptionText = "Notifications for incoming calls"
             val importance = NotificationManager.IMPORTANCE_HIGH
+            val audioAttributes = AudioAttributes.Builder()
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .build()
             val channel = NotificationChannel(channelId, name, importance).apply {
                 description = descriptionText
                 enableLights(true)
                 enableVibration(true)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                setSound(Settings.System.DEFAULT_RINGTONE_URI, audioAttributes)
             }
             notificationManager.createNotificationChannel(channel)
         }
@@ -111,6 +118,7 @@ class CallNotificationService : Service() {
             .setContentIntent(fullScreenPendingIntent)
             .setAutoCancel(true)
             .setOngoing(true)
+            .setSound(Settings.System.DEFAULT_RINGTONE_URI)
             .addAction(R.mipmap.ic_launcher, "Answer", answerPendingIntent)
             .addAction(R.mipmap.ic_launcher, "Decline", declinePendingIntent)
 
@@ -122,7 +130,9 @@ class CallNotificationService : Service() {
             notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
         }
 
-        val notification = notificationBuilder.build()
+        val notification = notificationBuilder.build().apply {
+            this.flags = this.flags or Notification.FLAG_INSISTENT
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)

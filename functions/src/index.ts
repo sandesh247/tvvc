@@ -1,4 +1,4 @@
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentCreated, onDocumentDeleted } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
@@ -198,6 +198,121 @@ export const onCallCreated = onDocumentCreated({
     }
   } catch (error) {
     console.error("Error fetching callee profile or dispatching FCM notification:", error);
+  }
+});
+
+/**
+ * Triggered when a call document is deleted in Firestore.
+ */
+export const onCallDeleted = onDocumentDeleted({
+  document: "calls/{callId}",
+  database: "default"
+}, async (event) => {
+  const snapshot = event.data;
+  if (!snapshot) return;
+  const data = snapshot.data() as CallDocument | undefined;
+  if (!data) return;
+
+  const callId = event.params.callId;
+  const calleeId = data.calleeId;
+
+  if (!calleeId) {
+    console.log(`Missing calleeId in deleted document ${callId}`);
+    return;
+  }
+
+  console.log(`Call ${callId} was deleted. Cancelling call for callee ${calleeId}`);
+
+  try {
+    let fcmToken: string | undefined;
+
+    // Try retrieving FCM token from private secrets first
+    try {
+      const secretsDoc = await db.collection("users").doc(calleeId).collection("private").doc("secrets").get();
+      if (secretsDoc.exists) {
+        fcmToken = secretsDoc.data()?.fcmToken;
+      }
+    } catch (secretsError) {
+      console.warn(`Error fetching secrets for user ${calleeId} during deletion:`, secretsError);
+    }
+
+    // Fallback to the user profile document if not found in secrets
+    if (!fcmToken) {
+      const userDoc = await db.collection("users").doc(calleeId).get();
+      if (userDoc.exists) {
+        const userData = userDoc.data() as UserDocument | undefined;
+        fcmToken = userData?.fcmToken;
+      } else {
+        console.log(`User ${calleeId} profile not found during call deletion.`);
+        return;
+      }
+    }
+
+    if (!fcmToken) {
+      console.log(`User ${calleeId} has no fcmToken registered during call deletion.`);
+      return;
+    }
+
+    console.log(`Sending CANCEL_CALL FCM notification to ${fcmToken}`);
+
+    const message = {
+      token: fcmToken,
+      data: {
+        action: "CANCEL_CALL",
+        callId: callId,
+      },
+      android: {
+        priority: "high" as const,
+        ttl: 30000,
+      },
+    };
+
+    try {
+      await admin.messaging().send(message);
+      console.log("Successfully sent CANCEL_CALL FCM message");
+    } catch (error: any) {
+      console.error("Error sending CANCEL_CALL FCM notification:", error);
+      const errorCode = error?.code;
+      const errorMessage = error?.message || "";
+      const isStaleToken = errorCode === "messaging/invalid-registration-token" ||
+        errorCode === "messaging/registration-token-not-registered" ||
+        errorCode === "messaging/invalid-argument" ||
+        errorMessage.includes("registration-token-not-registered");
+
+      if (isStaleToken) {
+        console.log(`Stale token detected for user ${calleeId}. Transactionally cleaning up.`);
+        try {
+          const userRef = db.collection("users").doc(calleeId);
+          const secretsRef = userRef.collection("private").doc("secrets");
+          await db.runTransaction(async (transaction) => {
+            const userSnap = await transaction.get(userRef);
+            const secretsSnap = await transaction.get(secretsRef);
+            
+            const updates: { [key: string]: any } = {};
+            if (userSnap.exists && userSnap.data()?.fcmToken === fcmToken) {
+              updates.fcmToken = admin.firestore.FieldValue.delete();
+            }
+            
+            const secretsUpdates: { [key: string]: any } = {};
+            if (secretsSnap.exists && secretsSnap.data()?.fcmToken === fcmToken) {
+              secretsUpdates.fcmToken = admin.firestore.FieldValue.delete();
+            }
+
+            if (Object.keys(updates).length > 0) {
+              transaction.update(userRef, updates);
+            }
+            if (Object.keys(secretsUpdates).length > 0) {
+              transaction.update(secretsRef, secretsUpdates);
+            }
+          });
+          console.log(`Successfully completed transactional stale token cleanup for user ${calleeId}`);
+        } catch (txError) {
+          console.error("Error running transactional token cleanup:", txError);
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Error handling call deletion:", error);
   }
 });
 

@@ -227,6 +227,10 @@ const mockFunctionsFirestore = {
   onDocumentCreated: (options, handler) => {
     const realHandler = typeof options === 'function' ? options : handler;
     return realHandler;
+  },
+  onDocumentDeleted: (options, handler) => {
+    const realHandler = typeof options === 'function' ? options : handler;
+    return realHandler;
   }
 };
 
@@ -571,7 +575,142 @@ async function testOnCallCreated() {
   // Secrets document token 'profile-token' should be deleted because it matches
   assert.strictEqual(mockFirestoreState['users/callee-1/private/secrets'].fcmToken, undefined);
 
+  // 8. Test stale token cleanup: messaging/registration-token-not-registered code
+  resetMocks();
+  mockFirestoreState['users/caller-1'] = { name: 'Alice' };
+  mockFirestoreState['users/callee-1'] = { fcmToken: 'profile-token' };
+  mockFirestoreState['users/callee-1/private/secrets'] = { fcmToken: 'profile-token' };
+  const staleCodeError1 = new Error("Registration token not registered");
+  staleCodeError1.code = "messaging/registration-token-not-registered";
+  mockFcmShouldFail = staleCodeError1;
+  await functions.onCallCreated(event1);
+  assert.strictEqual(mockFirestoreState['users/callee-1'].fcmToken, undefined);
+  assert.strictEqual(mockFirestoreState['users/callee-1/private/secrets'].fcmToken, undefined);
+
+  // 9. Test stale token cleanup: messaging/invalid-argument code
+  resetMocks();
+  mockFirestoreState['users/caller-1'] = { name: 'Alice' };
+  mockFirestoreState['users/callee-1'] = { fcmToken: 'profile-token' };
+  mockFirestoreState['users/callee-1/private/secrets'] = { fcmToken: 'profile-token' };
+  const staleCodeError2 = new Error("Invalid argument");
+  staleCodeError2.code = "messaging/invalid-argument";
+  mockFcmShouldFail = staleCodeError2;
+  await functions.onCallCreated(event1);
+  assert.strictEqual(mockFirestoreState['users/callee-1'].fcmToken, undefined);
+  assert.strictEqual(mockFirestoreState['users/callee-1/private/secrets'].fcmToken, undefined);
+
+  // 10. Test transactional failure handling: transaction throws an error but function does not crash
+  resetMocks();
+  mockFirestoreState['users/caller-1'] = { name: 'Alice' };
+  mockFirestoreState['users/callee-1'] = { fcmToken: 'profile-token' };
+  mockFirestoreState['users/callee-1/private/secrets'] = { fcmToken: 'profile-token' };
+  mockFcmShouldFail = staleError;
+  const originalRunTransaction = mockDb.runTransaction;
+  mockDb.runTransaction = async () => {
+    throw new Error("Simulated Firestore transaction failure");
+  };
+  // This should complete successfully and catch the transaction error without throwing an unhandled rejection
+  await functions.onCallCreated(event1);
+  // Restore runTransaction
+  mockDb.runTransaction = originalRunTransaction;
+  // Token should NOT be deleted because the transaction failed
+  assert.strictEqual(mockFirestoreState['users/callee-1'].fcmToken, 'profile-token');
+  assert.strictEqual(mockFirestoreState['users/callee-1/private/secrets'].fcmToken, 'profile-token');
+
   console.log('onCallCreated (F-21) tests passed!');
+}
+
+async function testOnCallDeleted() {
+  console.log('--- Testing onCallDeleted ---');
+
+  // 1. Success case: retrieve token from secrets, send cancel call message
+  resetMocks();
+  mockFirestoreState['users/caller-1'] = { name: 'Alice' };
+  mockFirestoreState['users/callee-1'] = { fcmToken: 'profile-token' };
+  mockFirestoreState['users/callee-1/private/secrets'] = { fcmToken: 'secret-token' };
+
+  const event = {
+    data: {
+      data: () => ({ callerId: 'caller-1', calleeId: 'callee-1' })
+    },
+    params: { callId: 'call-123' }
+  };
+
+  await functions.onCallDeleted(event);
+
+  assert.strictEqual(mockFcmSent.length, 1);
+  assert.strictEqual(mockFcmSent[0].token, 'secret-token');
+  assert.strictEqual(mockFcmSent[0].data.action, 'CANCEL_CALL');
+  assert.strictEqual(mockFcmSent[0].data.callId, 'call-123');
+
+  // 2. Fallback case: token from user document
+  resetMocks();
+  mockFirestoreState['users/caller-1'] = { name: 'Alice' };
+  mockFirestoreState['users/callee-1'] = { fcmToken: 'profile-token' };
+
+  await functions.onCallDeleted(event);
+
+  assert.strictEqual(mockFcmSent.length, 1);
+  assert.strictEqual(mockFcmSent[0].token, 'profile-token');
+  assert.strictEqual(mockFcmSent[0].data.action, 'CANCEL_CALL');
+
+  // 3. Test stale token cleanup works when sending fails with a stale token error
+  resetMocks();
+  mockFirestoreState['users/caller-1'] = { name: 'Alice' };
+  mockFirestoreState['users/callee-1'] = { fcmToken: 'profile-token' };
+  mockFirestoreState['users/callee-1/private/secrets'] = { fcmToken: 'profile-token' };
+
+  const staleError = new Error("Invalid registration token");
+  staleError.code = "messaging/invalid-registration-token";
+  mockFcmShouldFail = staleError;
+
+  await functions.onCallDeleted(event);
+
+  // Verify token is deleted from both documents transactionally
+  assert.strictEqual(mockFirestoreState['users/callee-1'].fcmToken, undefined);
+  assert.strictEqual(mockFirestoreState['users/callee-1/private/secrets'].fcmToken, undefined);
+  assert.strictEqual(transactionCalls.length, 1);
+
+  // 4. Test stale token cleanup on call deletion: messaging/registration-token-not-registered code
+  resetMocks();
+  mockFirestoreState['users/caller-1'] = { name: 'Alice' };
+  mockFirestoreState['users/callee-1'] = { fcmToken: 'profile-token' };
+  mockFirestoreState['users/callee-1/private/secrets'] = { fcmToken: 'profile-token' };
+  const staleCodeError1 = new Error("Registration token not registered");
+  staleCodeError1.code = "messaging/registration-token-not-registered";
+  mockFcmShouldFail = staleCodeError1;
+  await functions.onCallDeleted(event);
+  assert.strictEqual(mockFirestoreState['users/callee-1'].fcmToken, undefined);
+  assert.strictEqual(mockFirestoreState['users/callee-1/private/secrets'].fcmToken, undefined);
+
+  // 5. Test stale token cleanup on call deletion: messaging/invalid-argument code
+  resetMocks();
+  mockFirestoreState['users/caller-1'] = { name: 'Alice' };
+  mockFirestoreState['users/callee-1'] = { fcmToken: 'profile-token' };
+  mockFirestoreState['users/callee-1/private/secrets'] = { fcmToken: 'profile-token' };
+  const staleCodeError2 = new Error("Invalid argument");
+  staleCodeError2.code = "messaging/invalid-argument";
+  mockFcmShouldFail = staleCodeError2;
+  await functions.onCallDeleted(event);
+  assert.strictEqual(mockFirestoreState['users/callee-1'].fcmToken, undefined);
+  assert.strictEqual(mockFirestoreState['users/callee-1/private/secrets'].fcmToken, undefined);
+
+  // 6. Test transactional failure handling on call deletion
+  resetMocks();
+  mockFirestoreState['users/caller-1'] = { name: 'Alice' };
+  mockFirestoreState['users/callee-1'] = { fcmToken: 'profile-token' };
+  mockFirestoreState['users/callee-1/private/secrets'] = { fcmToken: 'profile-token' };
+  mockFcmShouldFail = staleError;
+  const originalRunTransaction = mockDb.runTransaction;
+  mockDb.runTransaction = async () => {
+    throw new Error("Simulated Firestore transaction failure");
+  };
+  await functions.onCallDeleted(event);
+  mockDb.runTransaction = originalRunTransaction;
+  assert.strictEqual(mockFirestoreState['users/callee-1'].fcmToken, 'profile-token');
+  assert.strictEqual(mockFirestoreState['users/callee-1/private/secrets'].fcmToken, 'profile-token');
+
+  console.log('onCallDeleted tests passed!');
 }
 
 async function testUsersGc() {
@@ -636,6 +775,7 @@ async function runAllTests() {
     await testCallsGc();
     await testTurnCacheAndCoalescing();
     await testOnCallCreated();
+    await testOnCallDeleted();
     await testUsersGc();
     console.log('\n=======================================');
     console.log('ALL CLOUD FUNCTION TESTS PASSED!');
