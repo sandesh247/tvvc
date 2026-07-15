@@ -66,13 +66,22 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Wrap the WebView in a FrameLayout because WebView does not reliably support setPadding.
+        // We apply the WindowInsets to the FrameLayout instead.
+        val rootLayout = android.widget.FrameLayout(this)
+        
         webView = WebView(this)
-        setContentView(webView)
+        rootLayout.addView(
+            webView,
+            android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        
+        setContentView(rootLayout)
 
-        // On Android 15 (targetSdk 35+), edge-to-edge is enforced by default and
-        // the traditional fitsSystemWindows flag is ignored by the OS.
-        // The officially recommended way to prevent overlap is using a WindowInsetsListener.
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView) { view, windowInsets ->
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, windowInsets ->
             val insets = windowInsets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
             view.setPadding(insets.left, insets.top, insets.right, insets.bottom)
             windowInsets
