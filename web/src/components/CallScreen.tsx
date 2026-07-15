@@ -11,10 +11,6 @@ import {
 const adjustSdp = (sdp: string): string => {
   // Disable stereo and force mono (stereo=0) to simplify echo cancellation modeling
   let modifiedSdp = sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;stereo=0;sprop-stereo=0');
-  
-  // Force voice mode and preferred audio packetization
-  modifiedSdp = modifiedSdp.replace(/a=rtpmap:(\d+) opus\/48000\/2/g, 'a=rtpmap:$1 opus/48000/1');
-  
   return modifiedSdp;
 };
 
@@ -24,7 +20,7 @@ const mediaConstraints = {
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
-    channelCount: 1
+    channelCount: { ideal: 1 }
   }
 };
 
