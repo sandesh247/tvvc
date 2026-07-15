@@ -5,22 +5,26 @@ This file contains instructions for any AI assistant working on the **TVVC** pro
 ## Android Build Versioning Rule
 
 > [!IMPORTANT]
-> **Every time** the user asks to build the Android app (`.aab` or `.apk`) for publication or updates, you **MUST** increment the versioning fields in [build.gradle.kts](file:///Users/sandesh247/github/tvvc/tvvc/android/app/build.gradle.kts) before running the build:
+> **Every time** the user asks to build the Android app (`.aab` or `.apk`) for publication or updates, you **MUST** increment the versioning fields before running the build:
 >
-> 1. Increment `versionCode` by `1` (integer).
-> 2. Increment `versionName` (e.g., from `1.0.1` to `1.0.2` or `1.1.0`).
+> 1. Increment `versionCode` by `1` (integer) in [build.gradle.kts](file:///Users/sandesh247/github/tvvc/tvvc/android/app/build.gradle.kts).
+> 2. Increment the `version` field in [package.json](file:///Users/sandesh247/github/tvvc/tvvc/web/package.json) (which `build.gradle.kts` parses automatically for the `versionName`).
 
-### Code Location
-Modify the versioning inside `defaultConfig` in [build.gradle.kts](file:///Users/sandesh247/github/tvvc/tvvc/android/app/build.gradle.kts#L15-L22):
+### Code Locations
+1. **versionCode**: Modify `versionCode` inside `defaultConfig` in [build.gradle.kts](file:///Users/sandesh247/github/tvvc/tvvc/android/app/build.gradle.kts#L20-L31):
 ```kotlin
     defaultConfig {
         applicationId = "com.sandesh247.tvvc"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2 // <-- INCREMENT THIS
-        versionName = "1.0.1" // <-- INCREMENT THIS
+        versionCode = 34 // <-- INCREMENT THIS
+        versionName = packageVersionName // <-- Read automatically from package.json
         ...
     }
+```
+2. **version**: Modify `version` inside [package.json](file:///Users/sandesh247/github/tvvc/tvvc/web/package.json#L4):
+```json
+  "version": "1.1.23", // <-- INCREMENT THIS
 ```
 
 ---
@@ -77,12 +81,12 @@ curl -X DELETE -H "Authorization: Bearer <ACCESS_TOKEN>" \
 
 ### 1. Version Guard Logic
 The app version compatibility guard automatically enforces updates.
-- **Web Package Version**: Handled in `web/package.json`.
+- **Web Package Version**: Handled in `web/package.json` via the `version` field.
 - **Backend Enforced Version**: Stored in Firestore database `'default'` at `/admin/config` as the `minClientVersion` field.
 - **Automatic Deployment/Sync**:
-  When you build the React frontend using `npm run build` inside `web/`, the script `node ../scripts/sync-version.js` executes first. It reads the current package version and calls the Firestore REST API using the local active Firebase CLI access token (from `~/.config/configstore/firebase-tools.json`) to update the minimum required version in the database.
+  When you build the React frontend using `npm run build` inside `web/`, the script `node ../scripts/sync-version.js` executes first. It reads the explicit `minClientVersion` field (falling back to `version` if not found) from `web/package.json` and calls the Firestore REST API using the local active Firebase CLI access token (from `~/.config/configstore/firebase-tools.json`) to update the minimum required version in the database.
 - **Rules on Client Version Update**:
-  If you increment the version in `web/package.json`, the next production build will automatically set this version as the minimum required version for all clients.
+  If you increment the `minClientVersion` in `web/package.json`, the next production build will automatically set this version as the minimum required version for all clients, forcing updates for anyone running a version lower than this value. Incrementing `version` alone does not force updates.
 
 ### 2. Error Boundary & Crash Handling
 - **Crash Counter**: `sessionStorage.getItem('app_crash_count')`.

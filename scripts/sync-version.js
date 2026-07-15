@@ -40,17 +40,17 @@ function makePatchRequest(urlStr, headers, body) {
 
 async function syncVersion() {
   try {
-    // 1. Read version from web/package.json
+    // 1. Read minClientVersion from web/package.json
     const webPackageJsonPath = path.join(__dirname, '..', 'web', 'package.json');
     if (!fs.existsSync(webPackageJsonPath)) {
       throw new Error(`web/package.json not found at: ${webPackageJsonPath}`);
     }
     const webPackageData = JSON.parse(fs.readFileSync(webPackageJsonPath, 'utf8'));
-    const version = webPackageData.version;
-    if (!version) {
-      throw new Error('Version field is missing in web/package.json');
+    const minClientVersion = webPackageData.minClientVersion || webPackageData.version;
+    if (!minClientVersion) {
+      throw new Error('Neither minClientVersion nor version field found in web/package.json');
     }
-    console.log(`Read version '${version}' from web/package.json`);
+    console.log(`Read minClientVersion '${minClientVersion}' from web/package.json`);
 
     // 2. Read access token from configstore
     const homeDir = os.homedir();
@@ -73,12 +73,12 @@ async function syncVersion() {
     const body = {
       fields: {
         minClientVersion: {
-          stringValue: version
+          stringValue: minClientVersion
         }
       }
     };
 
-    console.log(`Sending PATCH request to update minClientVersion in Firestore default database to '${version}'...`);
+    console.log(`Sending PATCH request to update minClientVersion in Firestore default database to '${minClientVersion}'...`);
     const response = await makePatchRequest(url, headers, body);
 
     if (!response.ok) {

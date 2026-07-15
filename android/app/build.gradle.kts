@@ -20,12 +20,21 @@ android {
     val databaseId = envProps.getProperty("VITE_FIRESTORE_DATABASE_ID", "default")
     val webAppUrl = envProps.getProperty("VITE_WEB_APP_URL", "https://gh-tvvc.web.app")
 
+    val packageJsonFile = file("../../web/package.json")
+    val packageVersionName = if (packageJsonFile.exists()) {
+        val content = packageJsonFile.readText()
+        val match = "\"version\"\\s*:\\s*\"([^\"]+)\"".toRegex().find(content)
+        match?.groupValues?.get(1) ?: "1.0.0"
+    } else {
+        "1.0.0"
+    }
+
     defaultConfig {
         applicationId = "com.sandesh247.tvvc"
         minSdk = 24
         targetSdk = 36
         versionCode = 33
-        versionName = "1.1.22"
+        versionName = packageVersionName
         buildConfigField("String", "WEB_APP_URL", "\"$webAppUrl\"")
         buildConfigField("String", "FIRESTORE_DATABASE_ID", "\"$databaseId\"")
     }
