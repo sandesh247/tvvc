@@ -8,6 +8,26 @@ import {
   addDoc, deleteDoc, getDocs, serverTimestamp, runTransaction
 } from 'firebase/firestore';
 
+const adjustSdp = (sdp: string): string => {
+  // Disable stereo and force mono (stereo=0) to simplify echo cancellation modeling
+  let modifiedSdp = sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;stereo=0;sprop-stereo=0');
+  
+  // Force voice mode and preferred audio packetization
+  modifiedSdp = modifiedSdp.replace(/a=rtpmap:(\d+) opus\/48000\/2/g, 'a=rtpmap:$1 opus/48000/1');
+  
+  return modifiedSdp;
+};
+
+const mediaConstraints = {
+  video: true,
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1
+  }
+};
+
 interface CallScreenProps {
   currentUser: User;
   remoteUserId: string;
@@ -239,7 +259,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
     // Fix callee camera privacy leak: only request media stream and add tracks on explicit accept
     if (!localStream.current) {
       try {
-        localStream.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localStream.current = await navigator.mediaDevices.getUserMedia(mediaConstraints);
         if (isCancelled.current) {
           localStream.current.getTracks().forEach(track => track.stop());
           localStream.current = null;
@@ -318,12 +338,17 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
 
     const answerDescription = await pc.current.createAnswer();
     if (isCancelled.current) return;
-    await pc.current.setLocalDescription(answerDescription);
+    const modifiedSdp = answerDescription.sdp ? adjustSdp(answerDescription.sdp) : '';
+    const modifiedAnswerDescription = new RTCSessionDescription({
+      type: answerDescription.type,
+      sdp: modifiedSdp,
+    });
+    await pc.current.setLocalDescription(modifiedAnswerDescription);
     if (isCancelled.current) return;
 
     const answer = {
-      type: answerDescription.type,
-      sdp: answerDescription.sdp,
+      type: modifiedAnswerDescription.type,
+      sdp: modifiedAnswerDescription.sdp,
     };
 
     await updateDoc(callDoc, { answer, status: 'connected' });
@@ -421,15 +446,20 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
       try { await deleteDoc(callDoc); } catch (err) { console.error(err); }
       return;
     }
-    await pc.current.setLocalDescription(offerDescription);
+    const modifiedSdp = offerDescription.sdp ? adjustSdp(offerDescription.sdp) : '';
+    const modifiedOfferDescription = new RTCSessionDescription({
+      type: offerDescription.type,
+      sdp: modifiedSdp,
+    });
+    await pc.current.setLocalDescription(modifiedOfferDescription);
     if (isCancelled.current) {
       try { await deleteDoc(callDoc); } catch (err) { console.error(err); }
       return;
     }
 
     const offer = {
-      sdp: offerDescription.sdp,
-      type: offerDescription.type,
+      sdp: modifiedOfferDescription.sdp,
+      type: modifiedOfferDescription.type,
     };
 
     if (isCancelled.current) {
@@ -568,7 +598,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
 
       if (!isIncoming) {
         try {
-          localStream.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          localStream.current = await navigator.mediaDevices.getUserMedia(mediaConstraints);
           if (isCancelled.current) {
             localStream.current.getTracks().forEach(track => track.stop());
             localStream.current = null;

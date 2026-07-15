@@ -30,6 +30,11 @@ class MainActivity : ComponentActivity() {
     private var pendingCallAction: String? = null
     private var isAppReady = false
 
+    private var audioFocusRequest: android.media.AudioFocusRequest? = null
+    private val audioFocusChangeListener = android.media.AudioManager.OnAudioFocusChangeListener { focusChange ->
+        android.util.Log.d("TVVC", "Audio focus changed: $focusChange")
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -352,7 +357,11 @@ class MainActivity : ComponentActivity() {
         @android.webkit.JavascriptInterface
         fun setSpeakerphoneOn(on: Boolean) {
             val activity = activityRef.get() ?: return
-            Log.d("TVVC", "setSpeakerphoneOn: $on")
+            if (activity.isTvDevice()) {
+                android.util.Log.d("TVVC", "setSpeakerphoneOn: Skipping routing change on Android TV device")
+                return
+            }
+            android.util.Log.d("TVVC", "setSpeakerphoneOn: $on")
             try {
                 val audioManager = activity.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
                 audioManager.isSpeakerphoneOn = on
@@ -369,7 +378,13 @@ class MainActivity : ComponentActivity() {
             }
             try {
                 val audioManager = activity.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
-                audioManager.mode = if (active) android.media.AudioManager.MODE_IN_COMMUNICATION else android.media.AudioManager.MODE_NORMAL
+                if (active) {
+                    activity.requestCallAudioFocus(audioManager)
+                    audioManager.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+                } else {
+                    audioManager.mode = android.media.AudioManager.MODE_NORMAL
+                    activity.abandonCallAudioFocus(audioManager)
+                }
             } catch (e: Exception) {
                 Log.e("TVVC", "Error setting call active audio mode", e)
             }
@@ -575,6 +590,61 @@ class MainActivity : ComponentActivity() {
             webView.destroy()
         }
         super.onDestroy()
+    }
+
+    internal fun isTvDevice(): Boolean {
+        val uiModeManager = getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        return uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
+
+    private fun requestCallAudioFocus(audioManager: android.media.AudioManager) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val playbackAttributes = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                
+                audioFocusRequest = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                    .setAudioAttributes(playbackAttributes)
+                    .setAcceptsDelayedFocusGain(false)
+                    .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                    .build()
+                    
+                audioFocusRequest?.let {
+                    val result = audioManager.requestAudioFocus(it)
+                    android.util.Log.d("TVVC", "Requested VOIP Audio Focus. Result code: $result")
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val result = audioManager.requestAudioFocus(
+                    audioFocusChangeListener,
+                    android.media.AudioManager.STREAM_VOICE_CALL,
+                    android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                )
+                android.util.Log.d("TVVC", "Requested legacy Audio Focus. Result code: $result")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("TVVC", "Failed to request Audio Focus", e)
+        }
+    }
+
+    private fun abandonCallAudioFocus(audioManager: android.media.AudioManager) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                audioFocusRequest?.let {
+                    val result = audioManager.abandonAudioFocusRequest(it)
+                    android.util.Log.d("TVVC", "Abandoned VOIP Audio Focus. Result code: $result")
+                }
+                audioFocusRequest = null
+            } else {
+                @Suppress("DEPRECATION")
+                val result = audioManager.abandonAudioFocus(audioFocusChangeListener)
+                android.util.Log.d("TVVC", "Abandoned legacy Audio Focus. Result code: $result")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("TVVC", "Failed to abandon Audio Focus", e)
+        }
     }
 
     private fun showOverLockscreenAndWake() {
