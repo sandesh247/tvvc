@@ -67,8 +67,16 @@ class MainActivity : ComponentActivity() {
         }
 
         webView = WebView(this)
-        webView.fitsSystemWindows = true
         setContentView(webView)
+
+        // On Android 15 (targetSdk 35+), edge-to-edge is enforced by default and
+        // the traditional fitsSystemWindows flag is ignored by the OS.
+        // The officially recommended way to prevent overlap is using a WindowInsetsListener.
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView) { view, windowInsets ->
+            val insets = windowInsets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            view.setPadding(insets.left, insets.top, insets.right, insets.bottom)
+            windowInsets
+        }
 
         webView.isFocusable = true
         webView.post {

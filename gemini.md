@@ -87,6 +87,7 @@ The app version compatibility guard automatically enforces updates.
   When you build the React frontend using `npm run build` inside `web/`, the script `node ../scripts/sync-version.js` executes first. It reads the explicit `minClientVersion` field (falling back to `version` if not found) from `web/package.json` and calls the Firestore REST API using the local active Firebase CLI access token (from `~/.config/configstore/firebase-tools.json`) to update the minimum required version in the database.
 - **Rules on Client Version Update**:
   If you increment the `minClientVersion` in `web/package.json`, the next production build will automatically set this version as the minimum required version for all clients, forcing updates for anyone running a version lower than this value. Incrementing `version` alone does not force updates.
+  **Guidance**: When making changes, evaluate if they are backwards incompatible with older clients (e.g., changing Firestore schemas, requiring new API fields, or deprecating cloud functions). If there is a potential backwards incompatible change, you must recommend incrementing the `minClientVersion`. If the changes are compatible (such as purely client-side UI/UX fixes), you must explicitly state in your response that incrementing `minClientVersion` is not necessary.
 
 ### 2. Error Boundary & Crash Handling
 - **Crash Counter**: `sessionStorage.getItem('app_crash_count')`.
