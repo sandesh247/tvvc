@@ -32,6 +32,9 @@ This file contains instructions for any AI assistant working on the **TVVC** pro
 ## Build & Deployment Commands Reference
 
 ### 1. Build Android Release AAB & APK
+> [!IMPORTANT]
+> You must ALWAYS build **both** the `.aab` and the `.apk` together using the following combined command. Do not build just one of them.
+
 Always compile using the local OpenJDK 17 installation:
 ```bash
 cd android
