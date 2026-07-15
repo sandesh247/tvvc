@@ -1,7 +1,7 @@
 {
   "name": "web",
   "private": true,
-  "version": "1.1.22",
+  "version": "1.1.23",
   "minClientVersion": "1.1.19",
   "type": "module",
   "scripts": {
