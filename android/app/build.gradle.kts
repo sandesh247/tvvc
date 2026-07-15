@@ -93,9 +93,9 @@ tasks.register<Exec>("syncIcons") {
     commandLine("node", "scripts/sync-icons.js")
 
     // Declare inputs and outputs for up-to-date checking and caching
-    inputs.file(File(repoRoot, "web/public/favicon.svg"))
+    inputs.file(File(repoRoot, "web/public/favicon.png"))
     inputs.file(File(repoRoot, "scripts/sync-icons.js"))
-    outputs.file(File(repoRoot, "android/app/src/main/res/drawable/ic_launcher_foreground.xml"))
+    outputs.file(File(repoRoot, "android/app/src/main/res/mipmap-mdpi/ic_launcher.png"))
 }
 
 tasks.named("preBuild") {

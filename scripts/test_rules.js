@@ -2,7 +2,7 @@ const http = require('http');
 
 const PORT = 8080;
 const PROJECT_ID = 'gh-tvvc';
-const DATABASE_ID = '(default)';
+const DATABASE_ID = 'default';
 const BASE_URL = `http://localhost:${PORT}/v1/projects/${PROJECT_ID}/databases/${DATABASE_ID}/documents`;
 
 const makeJwt = (uid) => {
