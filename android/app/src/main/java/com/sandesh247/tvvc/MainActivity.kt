@@ -69,6 +69,9 @@ class MainActivity : ComponentActivity() {
         // Wrap the WebView in a FrameLayout because WebView does not reliably support setPadding.
         // We apply the WindowInsets to the FrameLayout instead.
         val rootLayout = android.widget.FrameLayout(this).apply {
+            // Note: This color matches the '--bg-main' CSS variable defined in
+            // web/src/index.css so that the system status bar blends seamlessly
+            // with the React web app's top navigation bar.
             setBackgroundColor(android.graphics.Color.parseColor("#0B0F19"))
         }
         
