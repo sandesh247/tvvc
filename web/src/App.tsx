@@ -31,6 +31,9 @@ declare global {
       getFcmToken?: () => string | null;
       onAppReady?: () => void;
       logError?: (message: string, stackTrace: string) => void;
+      requestOverlayPermission?: () => void;
+      requestFullScreenIntentPermission?: () => void;
+      requestIgnoreBatteryOptimizations?: () => void;
     };
     onCallCancelledBySystem?: () => void;
     handleIncomingCallIntent?: (callId: string, callerId: string, autoAnswer?: boolean) => void;
@@ -147,6 +150,15 @@ function App() {
     });
     return () => unsubscribe();
   }, [loadUserProfile]);
+
+  // Request background execution permissions on Android when authenticated
+  useEffect(() => {
+    if (authState === 'authenticated' && window.AndroidBridge) {
+      window.AndroidBridge.requestOverlayPermission?.();
+      window.AndroidBridge.requestFullScreenIntentPermission?.();
+      window.AndroidBridge.requestIgnoreBatteryOptimizations?.();
+    }
+  }, [authState]);
 
   const handleIncomingCall = useCallback((remoteUserId: string, callId: string, autoAnswer?: boolean) => {
     setActiveCall({ remoteUserId, incoming: true, callId, autoAnswer });

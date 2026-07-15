@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
 import android.media.AudioAttributes
 import android.provider.Settings
 import com.google.firebase.FirebaseApp
@@ -109,35 +110,43 @@ class CallNotificationService : Service() {
             pendingIntentFlags
         )
 
+        val callerPerson = Person.Builder()
+            .setName(callerName)
+            .setImportant(true)
+            .build()
+
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Incoming Call")
-            .setContentText("Call from $callerName")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setContentIntent(fullScreenPendingIntent)
-            .setAutoCancel(true)
             .setOngoing(true)
             .setSound(Settings.System.DEFAULT_RINGTONE_URI)
-            .addAction(R.mipmap.ic_launcher, "Answer", answerPendingIntent)
-            .addAction(R.mipmap.ic_launcher, "Decline", declinePendingIntent)
+            .setStyle(
+                NotificationCompat.CallStyle.forIncomingCall(
+                    callerPerson,
+                    declinePendingIntent,
+                    answerPendingIntent
+                )
+            )
 
-        if (Build.VERSION.SDK_INT >= 34) {
-            if (notificationManager.canUseFullScreenIntent()) {
-                notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
-            }
-        } else {
-            notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
-        }
+        notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
 
         val notification = notificationBuilder.build().apply {
             this.flags = this.flags or Notification.FLAG_INSISTENT
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
-        } else {
-            startForeground(101, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+            } else {
+                startForeground(101, notification)
+            }
+        } catch (e: Exception) {
+            Log.e("TVVC", "CallNotificationService: Failed to start foreground service. Showing fallback notification.", e)
+            MyFirebaseMessagingService.showFallbackCallNotification(this, callId, callerId, callerName)
+            stopSelf()
+            return START_NOT_STICKY
         }
 
         // 2. Listen to Firestore call document cancellation

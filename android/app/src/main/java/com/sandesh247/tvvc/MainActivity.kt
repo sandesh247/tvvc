@@ -488,10 +488,13 @@ class MainActivity : ComponentActivity() {
         fun requestIgnoreBatteryOptimizations() {
             val activity = activityRef.get() ?: return
             try {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:${activity.packageName}")
+                val powerManager = activity.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !powerManager.isIgnoringBatteryOptimizations(activity.packageName)) {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:${activity.packageName}")
+                    }
+                    activity.startActivity(intent)
                 }
-                activity.startActivity(intent)
             } catch (e: Exception) {
                 Log.e("TVVC", "Error launching ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", e)
             }
@@ -501,10 +504,12 @@ class MainActivity : ComponentActivity() {
         fun requestOverlayPermission() {
             val activity = activityRef.get() ?: return
             try {
-                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                    data = Uri.parse("package:${activity.packageName}")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(activity)) {
+                    val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                        data = Uri.parse("package:${activity.packageName}")
+                    }
+                    activity.startActivity(intent)
                 }
-                activity.startActivity(intent)
             } catch (e: Exception) {
                 Log.e("TVVC", "Error launching ACTION_MANAGE_OVERLAY_PERMISSION", e)
             }
@@ -515,10 +520,13 @@ class MainActivity : ComponentActivity() {
             val activity = activityRef.get() ?: return
             try {
                 if (Build.VERSION.SDK_INT >= 34) {
-                    val intent = Intent("android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT").apply {
-                        data = Uri.parse("package:${activity.packageName}")
+                    val notificationManager = activity.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                    if (!notificationManager.canUseFullScreenIntent()) {
+                        val intent = Intent("android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT").apply {
+                            data = Uri.parse("package:${activity.packageName}")
+                        }
+                        activity.startActivity(intent)
                     }
-                    activity.startActivity(intent)
                 }
             } catch (e: Exception) {
                 Log.e("TVVC", "Error launching ACTION_MANAGE_USE_FULL_SCREEN_INTENT", e)

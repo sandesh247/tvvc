@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
 import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessagingService
@@ -103,97 +104,100 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         startActivity(intent)
     }
 
-    private fun showFallbackCallNotification(context: Context, callId: String, callerId: String?, callerName: String) {
-        val channelId = "incoming_calls"
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    companion object {
+        fun showFallbackCallNotification(context: Context, callId: String, callerId: String?, callerName: String) {
+            val channelId = "incoming_calls"
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "Incoming Calls"
-            val descriptionText = "Notifications for incoming calls"
-            val importance = NotificationManager.IMPORTANCE_HIGH
-            val audioAttributes = AudioAttributes.Builder()
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val name = "Incoming Calls"
+                val descriptionText = "Notifications for incoming calls"
+                val importance = NotificationManager.IMPORTANCE_HIGH
+                val audioAttributes = AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .build()
+                val channel = NotificationChannel(channelId, name, importance).apply {
+                    description = descriptionText
+                    enableLights(true)
+                    enableVibration(true)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                    setSound(Settings.System.DEFAULT_RINGTONE_URI, audioAttributes)
+                }
+                notificationManager.createNotificationChannel(channel)
+            }
+
+            val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
+                action = "INCOMING_CALL"
+                putExtra("callId", callId)
+                putExtra("callerId", callerId)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+
+            val pendingIntentFlags = if (Build.VERSION.SDK_INT >= 23) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+
+            val fullScreenPendingIntent = PendingIntent.getActivity(
+                context,
+                0,
+                fullScreenIntent,
+                pendingIntentFlags
+            )
+
+            val answerIntent = Intent(context, MainActivity::class.java).apply {
+                action = "ANSWER_CALL"
+                putExtra("callId", callId)
+                putExtra("callerId", callerId)
+                putExtra("callerName", callerName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val answerPendingIntent = PendingIntent.getActivity(
+                context,
+                1,
+                answerIntent,
+                pendingIntentFlags
+            )
+
+            val declineIntent = Intent(context, CallActionReceiver::class.java).apply {
+                action = "DECLINE_CALL"
+                putExtra("callId", callId)
+            }
+            val declinePendingIntent = PendingIntent.getBroadcast(
+                context,
+                2,
+                declineIntent,
+                pendingIntentFlags
+            )
+
+            val callerPerson = Person.Builder()
+                .setName(callerName)
+                .setImportant(true)
                 .build()
-            val channel = NotificationChannel(channelId, name, importance).apply {
-                description = descriptionText
-                enableLights(true)
-                enableVibration(true)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                setSound(Settings.System.DEFAULT_RINGTONE_URI, audioAttributes)
-            }
-            notificationManager.createNotificationChannel(channel)
-        }
 
-        val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
-            action = "INCOMING_CALL"
-            putExtra("callId", callId)
-            putExtra("callerId", callerId)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
+            val notificationBuilder = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setContentIntent(fullScreenPendingIntent)
+                .setOngoing(true)
+                .setSound(Settings.System.DEFAULT_RINGTONE_URI)
+                .setStyle(
+                    NotificationCompat.CallStyle.forIncomingCall(
+                        callerPerson,
+                        declinePendingIntent,
+                        answerPendingIntent
+                    )
+                )
 
-        val pendingIntentFlags = if (Build.VERSION.SDK_INT >= 23) {
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        } else {
-            PendingIntent.FLAG_UPDATE_CURRENT
-        }
-
-        val fullScreenPendingIntent = PendingIntent.getActivity(
-            context,
-            0,
-            fullScreenIntent,
-            pendingIntentFlags
-        )
-
-        val answerIntent = Intent(context, MainActivity::class.java).apply {
-            action = "ANSWER_CALL"
-            putExtra("callId", callId)
-            putExtra("callerId", callerId)
-            putExtra("callerName", callerName)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-        val answerPendingIntent = PendingIntent.getActivity(
-            context,
-            1,
-            answerIntent,
-            pendingIntentFlags
-        )
-
-        val declineIntent = Intent(context, CallActionReceiver::class.java).apply {
-            action = "DECLINE_CALL"
-            putExtra("callId", callId)
-        }
-        val declinePendingIntent = PendingIntent.getBroadcast(
-            context,
-            2,
-            declineIntent,
-            pendingIntentFlags
-        )
-
-        val notificationBuilder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Incoming Call")
-            .setContentText("Call from $callerName")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setContentIntent(fullScreenPendingIntent)
-            .setAutoCancel(true)
-            .setOngoing(true)
-            .setSound(Settings.System.DEFAULT_RINGTONE_URI)
-            .addAction(R.mipmap.ic_launcher, "Answer", answerPendingIntent)
-            .addAction(R.mipmap.ic_launcher, "Decline", declinePendingIntent)
-
-        if (Build.VERSION.SDK_INT >= 34) {
-            if (notificationManager.canUseFullScreenIntent()) {
-                notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
-            }
-        } else {
             notificationBuilder.setFullScreenIntent(fullScreenPendingIntent, true)
-        }
 
-        val notification = notificationBuilder.build().apply {
-            this.flags = this.flags or Notification.FLAG_INSISTENT
+            val notification = notificationBuilder.build().apply {
+                this.flags = this.flags or Notification.FLAG_INSISTENT
+            }
+            notificationManager.notify(101, notification)
         }
-        notificationManager.notify(101, notification)
     }
 }
