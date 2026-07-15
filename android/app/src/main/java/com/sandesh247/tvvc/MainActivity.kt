@@ -68,7 +68,9 @@ class MainActivity : ComponentActivity() {
 
         // Wrap the WebView in a FrameLayout because WebView does not reliably support setPadding.
         // We apply the WindowInsets to the FrameLayout instead.
-        val rootLayout = android.widget.FrameLayout(this)
+        val rootLayout = android.widget.FrameLayout(this).apply {
+            setBackgroundColor(android.graphics.Color.parseColor("#0B0F19"))
+        }
         
         webView = WebView(this)
         rootLayout.addView(
