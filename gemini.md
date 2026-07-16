@@ -103,3 +103,13 @@ The app version compatibility guard automatically enforces updates.
 - **Manual Reset**: The **"Reset & Retry"** button clears `localStorage` and `sessionStorage` completely, then reloads the page.
 - **Success Heartbeat**: After mounting and running successfully for 5 seconds, the application automatically clears the `app_crash_count` from `sessionStorage`.
 
+---
+
+## Session Summary & Commit Documentation Rule
+
+Every time a session leads to a commit in the repository, a new `.md` file must be created inside the `CHANGES/` folder containing a summary of the session. The summary file must be submitted to the repository in the same commit as the changes it documents.
+
+The summary file must include:
+1. **Initial Goal**: The starting objective of the session.
+2. **Design Choices Considered**: The alternative approaches or designs evaluated.
+3. **Design Choices Chosen**: The final choices made and the rationale behind them.
