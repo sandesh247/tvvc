@@ -15,12 +15,30 @@ const adjustSdp = (sdp: string): string => {
 };
 
 const mediaConstraints = {
-  video: true,
+  video: {
+    width: { ideal: 640, max: 1280 },
+    height: { ideal: 480, max: 720 },
+    frameRate: { ideal: 24, max: 24 }
+  },
   audio: {
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
     channelCount: { ideal: 1 }
+  }
+};
+
+const applyVideoBitrateLimit = async (sender: RTCRtpSender) => {
+  try {
+    const parameters = sender.getParameters();
+    if (!parameters.encodings || parameters.encodings.length === 0) {
+      parameters.encodings = [{}];
+    }
+    parameters.encodings[0].maxBitrate = 800000; // 800 kbps
+    await sender.setParameters(parameters);
+    console.log('Video bitrate limit of 800kbps applied successfully.');
+  } catch (err) {
+    console.warn('Failed to apply video bitrate limit:', err);
   }
 };
 
@@ -266,7 +284,10 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
         }
 
         localStream.current.getTracks().forEach((track) => {
-          pc.current?.addTrack(track, localStream.current!);
+          const sender = pc.current?.addTrack(track, localStream.current!);
+          if (sender && track.kind === 'video') {
+            applyVideoBitrateLimit(sender);
+          }
         });
       } catch (err) {
         if (isCancelled.current) return;
@@ -605,7 +626,10 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
           }
 
           localStream.current.getTracks().forEach((track) => {
-            pc.current?.addTrack(track, localStream.current!);
+            const sender = pc.current?.addTrack(track, localStream.current!);
+            if (sender && track.kind === 'video') {
+              applyVideoBitrateLimit(sender);
+            }
           });
         } catch (err) {
           if (isCancelled.current) return;
