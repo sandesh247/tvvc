@@ -5,17 +5,125 @@ import type { User } from '../App';
 import { db, functions } from '../firebase';
 import {
   collection, doc, getDoc, onSnapshot, updateDoc,
-  addDoc, deleteDoc, getDocs, serverTimestamp, runTransaction
+  deleteDoc, getDocs, serverTimestamp, runTransaction,
+  writeBatch
 } from 'firebase/firestore';
 
 const adjustSdp = (sdp: string): string => {
-  // Disable stereo and force mono (stereo=0) to simplify echo cancellation modeling
-  let modifiedSdp = sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;stereo=0;sprop-stereo=0');
-  return modifiedSdp;
-};
+  const lines = sdp.split(/\r?\n/);
+  
+  // 1. Identify dynamic payload type of Opus from the rtpmap line: a=rtpmap:<pt> opus/48000/2
+  let opusPt: string | null = null;
+  for (const line of lines) {
+    if (line.toLowerCase().includes('a=rtpmap:') && line.toLowerCase().includes('opus/48000')) {
+      const match = line.match(/a=rtpmap:(\d+)/i);
+      if (match) {
+        opusPt = match[1];
+        break;
+      }
+    }
+  }
 
-const mediaConstraints = {
-  video: {
+  let inAudioSection = false;
+  let ptimeAdded = false;
+  let fmtpLineModifiedOrAdded = false;
+  
+  const processedLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace('\r', '');
+
+    // Track if we are inside the audio section
+    if (line.startsWith('m=')) {
+      // If we were in the audio section and haven't added ptime:10, add it before leaving the section
+      if (inAudioSection && !ptimeAdded) {
+        processedLines.push('a=ptime:10');
+        ptimeAdded = true;
+      }
+
+      if (line.startsWith('m=audio')) {
+        inAudioSection = true;
+        ptimeAdded = false;
+      } else {
+        inAudioSection = false;
+      }
+    }
+
+    // Skip any existing a=ptime: lines in the audio section to prevent duplication
+    if (inAudioSection && line.startsWith('a=ptime:')) {
+      continue;
+    }
+
+    // If we have identified the Opus payload type, check for its fmtp line.
+    // Use trailing space to avoid prefix matching bugs (e.g. Pt 11 matching 111).
+    if (opusPt && line.startsWith(`a=fmtp:${opusPt} `)) {
+      fmtpLineModifiedOrAdded = true;
+      
+      const prefix = `a=fmtp:${opusPt} `;
+      const paramStr = line.substring(prefix.length).trim();
+      const paramsList = paramStr.split(';').map(p => p.trim()).filter(Boolean);
+      
+      const paramMap: { [key: string]: string } = {};
+      paramsList.forEach(p => {
+        const parts = p.split('=');
+        if (parts.length >= 2) {
+          paramMap[parts[0].trim()] = parts.slice(1).join('=').trim();
+        } else {
+          paramMap[parts[0].trim()] = '';
+        }
+      });
+
+      // Force our low-latency and mono configurations
+      paramMap['useinbandfec'] = '1';
+      paramMap['stereo'] = '0';
+      paramMap['sprop-stereo'] = '0';
+      paramMap['ptime'] = '10';
+      paramMap['minptime'] = '10';
+      paramMap['maxaveragebitrate'] = '20000';
+
+      // Reconstruct the fmtp line
+      const newParamStr = Object.keys(paramMap).map(key => {
+        return paramMap[key] ? `${key}=${paramMap[key]}` : key;
+      }).join(';');
+
+      processedLines.push(`${prefix}${newParamStr}`);
+      continue;
+    }
+
+    processedLines.push(line);
+  }
+
+  // If we reach the end of the SDP and are still in the audio section, append ptime:10
+  if (inAudioSection && !ptimeAdded) {
+    processedLines.push('a=ptime:10');
+    ptimeAdded = true;
+  }
+
+  // If no fmtp line existed for Opus in the SDP but we found the Opus payload type,
+  // we must create it and append it inside the audio section.
+  if (opusPt && !fmtpLineModifiedOrAdded) {
+    let inserted = false;
+    const finalLines: string[] = [];
+    for (const line of processedLines) {
+      finalLines.push(line);
+      // Use trailing space to prevent matching wrong PTs
+      if (line.startsWith(`a=rtpmap:${opusPt} `) && !inserted) {
+        finalLines.push(`a=fmtp:${opusPt} useinbandfec=1;stereo=0;sprop-stereo=0;ptime=10;minptime=10;maxaveragebitrate=20000`);
+        inserted = true;
+      }
+    }
+    return finalLines.join('\r\n');
+  }
+
+  return processedLines.join('\r\n');
+}
+
+const getMediaConstraints = (isTv: boolean) => ({
+  video: isTv ? {
+    width: { ideal: 640, max: 960 },
+    height: { ideal: 360, max: 540 },
+    frameRate: { ideal: 15, max: 20 }
+  } : {
     width: { ideal: 640, max: 1280 },
     height: { ideal: 480, max: 720 },
     frameRate: { ideal: 24, max: 24 }
@@ -26,7 +134,7 @@ const mediaConstraints = {
     autoGainControl: true,
     channelCount: { ideal: 1 }
   }
-};
+});
 
 const applyVideoBitrateLimit = async (sender: RTCRtpSender) => {
   try {
@@ -49,9 +157,10 @@ interface CallScreenProps {
   callId: string;
   onEndCall: () => void;
   autoAnswer?: boolean;
+  preFetchedIceServers?: RTCIceServer[] | null;
 }
 
-export default function CallScreen({ currentUser, remoteUserId, isIncoming, callId, onEndCall, autoAnswer }: CallScreenProps) {
+export default function CallScreen({ currentUser, remoteUserId, isIncoming, callId, onEndCall, autoAnswer, preFetchedIceServers }: CallScreenProps) {
   const [callState, setCallState] = useState<'ringing' | 'connected'>('ringing');
   const [remoteUserName, setRemoteUserName] = useState<string>('Unknown');
   const [isMuted, setIsMuted] = useState(false);
@@ -59,6 +168,23 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
   const [calleeUnavailable, setCalleeUnavailable] = useState(false);
   const [isWebRTCReady, setIsWebRTCReady] = useState(false);
   const actionButtonRef = useRef<HTMLButtonElement>(null);
+
+  // TV Environment and dynamic constraints detection
+  const isTv = useMemo(() => {
+    return window.AndroidBridge?.isTvDevice ? window.AndroidBridge.isTvDevice() : false;
+  }, []);
+
+  const dynamicMediaConstraints = useMemo(() => getMediaConstraints(isTv), [isTv]);
+
+  // Keep ref of credentials in sync to prevent closure errors in async setupWebRTC
+  const iceServersRef = useRef<RTCIceServer[] | null>(preFetchedIceServers || null);
+  useEffect(() => {
+    iceServersRef.current = preFetchedIceServers || null;
+  }, [preFetchedIceServers]);
+
+  // Refs for local candidate batching/coalescing
+  const candidateQueue = useRef<any[]>([]);
+  const batchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -182,6 +308,35 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
     };
   }, [isIncoming, callState]);
 
+  const flushIceCandidates = useCallback(async (collectionRef: any) => {
+    if (candidateQueue.current.length === 0) return;
+    const candidatesToFlush = [...candidateQueue.current];
+    candidateQueue.current = [];
+
+    const batch = writeBatch(db);
+    candidatesToFlush.forEach((candidate) => {
+      const candidateDoc = doc(collectionRef);
+      batch.set(candidateDoc, candidate);
+    });
+
+    try {
+      await batch.commit();
+      console.log(`Successfully committed batch of ${candidatesToFlush.length} ICE candidates.`);
+    } catch (err) {
+      console.error('Failed to commit ICE candidates batch:', err);
+    }
+  }, []);
+
+  const queueIceCandidate = useCallback((collectionRef: any, candidate: any) => {
+    candidateQueue.current.push(candidate);
+    if (!batchTimer.current) {
+      batchTimer.current = setTimeout(() => {
+        batchTimer.current = null;
+        flushIceCandidates(collectionRef);
+      }, 500); // 500ms delay to batch candidates
+    }
+  }, [flushIceCandidates]);
+
   const hangup = useCallback(async () => {
     isCancelled.current = true;
     if (ringingTimeoutRef.current) {
@@ -190,6 +345,13 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
     }
     isRemoteDescriptionSet.current = false;
     queuedCandidates.current = [];
+
+    // Clear ICE candidate batch timer and queue
+    if (batchTimer.current) {
+      clearTimeout(batchTimer.current);
+      batchTimer.current = null;
+    }
+    candidateQueue.current = [];
 
     if (isHangingUp.current) return;
     isHangingUp.current = true;
@@ -273,7 +435,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
     // Fix callee camera privacy leak: only request media stream and add tracks on explicit accept
     if (!localStream.current) {
       try {
-        localStream.current = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+        localStream.current = await navigator.mediaDevices.getUserMedia(dynamicMediaConstraints);
         if (isCancelled.current) {
           localStream.current.getTracks().forEach(track => track.stop());
           localStream.current = null;
@@ -344,7 +506,13 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
     pc.current.onicecandidate = (event) => {
       if (isCancelled.current) return;
       if (event.candidate) {
-        addDoc(answerCandidates, event.candidate.toJSON());
+        queueIceCandidate(answerCandidates, event.candidate.toJSON());
+      } else {
+        if (batchTimer.current) {
+          clearTimeout(batchTimer.current);
+          batchTimer.current = null;
+        }
+        flushIceCandidates(answerCandidates);
       }
     };
 
@@ -382,7 +550,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
     });
     unsubscribes.current.push(unsub);
 
-  }, [callDoc, hangup, addOrQueueCandidate, flushQueuedCandidates]);
+  }, [callDoc, hangup, addOrQueueCandidate, flushQueuedCandidates, dynamicMediaConstraints, queueIceCandidate, flushIceCandidates]);
 
   useEffect(() => {
     if (isIncoming && callState === 'ringing') {
@@ -449,7 +617,13 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
     pc.current.onicecandidate = (event) => {
       if (isCancelled.current) return;
       if (event.candidate) {
-        addDoc(offerCandidates, event.candidate.toJSON());
+        queueIceCandidate(offerCandidates, event.candidate.toJSON());
+      } else {
+        if (batchTimer.current) {
+          clearTimeout(batchTimer.current);
+          batchTimer.current = null;
+        }
+        flushIceCandidates(offerCandidates);
       }
     };
 
@@ -545,7 +719,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
       });
     });
     unsubscribes.current.push(unsub2);
-  }, [callDoc, hangup, answerCall, currentUser.id, remoteUserId, addOrQueueCandidate, flushQueuedCandidates]);
+  }, [callDoc, hangup, answerCall, currentUser.id, remoteUserId, addOrQueueCandidate, flushQueuedCandidates, queueIceCandidate, flushIceCandidates]);
 
   // Listen for call deletion / cancellation immediately for incoming calls
   useEffect(() => {
@@ -569,26 +743,44 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
 
 
 
+  // Dynamically reconfigure peer connection if TURN credentials arrive mid-connection
+  useEffect(() => {
+    if (pc.current && preFetchedIceServers) {
+      try {
+        pc.current.setConfiguration({
+          iceServers: preFetchedIceServers,
+          iceCandidatePoolSize: 2
+        });
+        console.log('RTCPeerConnection configuration updated with late-arriving TURN credentials.');
+      } catch (err) {
+        console.warn('Failed to update RTCPeerConnection configuration:', err);
+      }
+    }
+  }, [preFetchedIceServers]);
+
   useEffect(() => {
     isCancelled.current = false;
 
     const setupWebRTC = async () => {
-      // Fetch TURN credentials from Cloud Function
-      let iceServers: RTCIceServer[] = [
+      // Use pre-fetched TURN credentials if available, otherwise fall back to STUN and attempt to fetch them
+      let iceServers: RTCIceServer[] = iceServersRef.current || [
         { urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
       ];
 
-      try {
-        const getTurnCreds = httpsCallable(functions, 'getTurnCredentials');
-        const result = await getTurnCreds();
-        if (isCancelled.current) return;
-        const data = result.data as { iceServers: RTCIceServer[] };
-        if (data.iceServers) {
-          iceServers = data.iceServers;
+      if (!iceServersRef.current) {
+        console.log('TURN credentials not pre-fetched, attempting to fetch now...');
+        try {
+          const getTurnCreds = httpsCallable(functions, 'getTurnCredentials');
+          const result = await getTurnCreds();
+          if (isCancelled.current) return;
+          const data = result.data as { iceServers: RTCIceServer[] };
+          if (data.iceServers) {
+            iceServers = data.iceServers;
+          }
+        } catch (err) {
+          if (isCancelled.current) return;
+          console.warn('Failed to fetch TURN credentials on demand, using STUN only:', err);
         }
-      } catch (err) {
-        if (isCancelled.current) return;
-        console.warn('Failed to fetch TURN credentials, using STUN only:', err);
       }
 
       pc.current = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 2 });
@@ -601,6 +793,20 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
 
       pc.current.ontrack = (event) => {
         if (isCancelled.current) return;
+
+        // Set playoutDelayHint to 0 on the RTCRtpReceiver to optimize the jitter buffer for low latency
+        if (event.receiver) {
+          const receiver = event.receiver as any;
+          if ('playoutDelayHint' in receiver) {
+            try {
+              receiver.playoutDelayHint = 0;
+              console.log('Set playoutDelayHint = 0 on RTCRtpReceiver for track:', event.track.id);
+            } catch (err) {
+              console.warn('Failed to set playoutDelayHint on RTCRtpReceiver:', err);
+            }
+          }
+        }
+
         if (event.streams && event.streams[0]) {
           if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== event.streams[0]) {
             remoteVideoRef.current.srcObject = event.streams[0];
@@ -615,7 +821,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
 
       if (!isIncoming) {
         try {
-          localStream.current = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+          localStream.current = await navigator.mediaDevices.getUserMedia(dynamicMediaConstraints);
           if (isCancelled.current) {
             localStream.current.getTracks().forEach(track => track.stop());
             localStream.current = null;
@@ -652,7 +858,7 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
       }
       hangup();
     };
-  }, [isIncoming, startCall, hangup]);
+  }, [isIncoming, startCall, hangup, dynamicMediaConstraints]);
 
   return (
     <div className="call-container">

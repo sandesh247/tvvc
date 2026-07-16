@@ -34,6 +34,7 @@ declare global {
       requestOverlayPermission?: () => void;
       requestFullScreenIntentPermission?: () => void;
       requestIgnoreBatteryOptimizations?: () => void;
+      isTvDevice?: () => boolean;
     };
     onCallCancelledBySystem?: () => void;
     handleIncomingCallIntent?: (callId: string, callerId: string, autoAnswer?: boolean) => void;
@@ -67,6 +68,7 @@ function App() {
   const [fcmToken, setFcmTokenState] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [activeCall, setActiveCall] = useState<{ remoteUserId: string; incoming: boolean; callId: string; autoAnswer?: boolean } | null>(null);
+  const [preFetchedIceServers, setPreFetchedIceServers] = useState<RTCIceServer[] | null>(null);
 
   const activeCallRef = useRef(activeCall);
   useEffect(() => {
@@ -132,6 +134,20 @@ function App() {
     }
   }, []);
 
+  const fetchTurnCredentials = useCallback(async () => {
+    try {
+      const getTurnCreds = httpsCallable(functions, 'getTurnCredentials');
+      const result = await getTurnCreds();
+      const data = result.data as { iceServers: RTCIceServer[] };
+      if (data.iceServers) {
+        setPreFetchedIceServers(data.iceServers);
+        console.log('Pre-fetched TURN credentials successfully.');
+      }
+    } catch (err) {
+      console.warn('Failed to pre-fetch TURN credentials:', err);
+    }
+  }, []);
+
   // Listen for Firebase Auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -140,16 +156,18 @@ function App() {
         // User is authenticated — check if they have a Firestore profile
         await loadUserProfile(firebaseUser.uid);
         setAuthState('authenticated');
+        fetchTurnCredentials();
       } else {
         window.AndroidBridge?.syncUid(null);
         setCurrentUser(null);
         setAuthState('unauthenticated');
         setProfileError(null);
         setProfileLoading(false);
+        setPreFetchedIceServers(null);
       }
     });
     return () => unsubscribe();
-  }, [loadUserProfile]);
+  }, [loadUserProfile, fetchTurnCredentials]);
 
   // Request background execution permissions on Android when authenticated
   useEffect(() => {
@@ -434,6 +452,7 @@ function App() {
           callId={activeCall.callId}
           onEndCall={handleEndCall}
           autoAnswer={activeCall.autoAnswer}
+          preFetchedIceServers={preFetchedIceServers}
         />
       ) : (
         <ContactList

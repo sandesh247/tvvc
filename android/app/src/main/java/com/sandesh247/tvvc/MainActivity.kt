@@ -439,6 +439,12 @@ class MainActivity : ComponentActivity() {
         }
 
         @android.webkit.JavascriptInterface
+        fun isTvDevice(): Boolean {
+            val activity = activityRef.get() ?: return false
+            return activity.isTvDevice()
+        }
+
+        @android.webkit.JavascriptInterface
         fun logError(message: String, stackTrace: String) {
             android.util.Log.e("TVVC", "JS Error: $message\n$stackTrace")
             try {
