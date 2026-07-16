@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, Volume2, VolumeX } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import type { User } from '../App';
 import { db, functions } from '../firebase';
@@ -176,6 +176,18 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
 
   const dynamicMediaConstraints = useMemo(() => getMediaConstraints(isTv), [isTv]);
 
+  const [isDuckingEnabled, setIsDuckingEnabled] = useState<boolean>(() => {
+    const cached = localStorage.getItem('tvvc_ducking_enabled');
+    if (cached !== null) {
+      return cached === 'true';
+    }
+    return isTv;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('tvvc_ducking_enabled', String(isDuckingEnabled));
+  }, [isDuckingEnabled]);
+
   // Keep ref of credentials in sync to prevent closure errors in async setupWebRTC
   const iceServersRef = useRef<RTCIceServer[] | null>(preFetchedIceServers || null);
   useEffect(() => {
@@ -210,6 +222,14 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
   const pc = useRef<RTCPeerConnection | null>(null);
   const localStream = useRef<MediaStream | null>(null);
   const remoteStream = useRef<MediaStream | null>(null);
+
+  // Web Audio API nodes for Adaptive Ducking
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const localSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const micGainNodeRef = useRef<GainNode | null>(null);
+  const localDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const remoteSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const remoteAnalyserRef = useRef<AnalyserNode | null>(null);
   const unsubscribes = useRef<(() => void)[]>([]);
   const isHangingUp = useRef(false);
   const isCancelled = useRef(false);
@@ -223,6 +243,106 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
 
   // Memoize the Firestore document reference — it never changes for the life of this call.
   const callDoc = useMemo(() => doc(db, 'calls', callDocId), [callDocId]);
+
+  const processLocalStream = useCallback((rawStream: MediaStream): MediaStream => {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) {
+      console.warn('AudioContext not supported by this browser/WebView.');
+      return rawStream;
+    }
+
+    try {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContextClass();
+      }
+      const ctx = audioContextRef.current;
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
+      const audioTrack = rawStream.getAudioTracks()[0];
+      if (!audioTrack) {
+        console.warn('No local audio track found for processing.');
+        return rawStream;
+      }
+
+      // Disconnect existing local nodes if they were already created
+      if (localSourceRef.current) {
+        try { localSourceRef.current.disconnect(); } catch (e) {}
+      }
+      if (micGainNodeRef.current) {
+        try { micGainNodeRef.current.disconnect(); } catch (e) {}
+      }
+
+      const sourceStream = new MediaStream([audioTrack]);
+      const sourceNode = ctx.createMediaStreamSource(sourceStream);
+      localSourceRef.current = sourceNode;
+
+      const gainNode = ctx.createGain();
+      gainNode.gain.setValueAtTime(1.0, ctx.currentTime);
+      micGainNodeRef.current = gainNode;
+
+      const destNode = ctx.createMediaStreamDestination();
+      localDestRef.current = destNode;
+
+      sourceNode.connect(gainNode);
+      gainNode.connect(destNode);
+
+      const processedTracks: MediaStreamTrack[] = [];
+      const processedAudioTrack = destNode.stream.getAudioTracks()[0];
+      if (processedAudioTrack) {
+        processedTracks.push(processedAudioTrack);
+      } else {
+        processedTracks.push(audioTrack);
+      }
+      rawStream.getVideoTracks().forEach(t => processedTracks.push(t));
+
+      console.log('Local stream processed through Web Audio GainNode.');
+      return new MediaStream(processedTracks);
+    } catch (err) {
+      console.error('Error setting up local audio processing graph:', err);
+      return rawStream;
+    }
+  }, []);
+
+  const setupRemoteAnalyser = useCallback((stream: MediaStream) => {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    try {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContextClass();
+      }
+      const ctx = audioContextRef.current;
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
+      const audioTrack = stream.getAudioTracks()[0];
+      if (!audioTrack) {
+        console.log('No remote audio track found for analyser setup');
+        return;
+      }
+
+      // Disconnect existing remote source
+      if (remoteSourceRef.current) {
+        try { remoteSourceRef.current.disconnect(); } catch (e) {}
+      }
+
+      const remoteSourceStream = new MediaStream([audioTrack]);
+      const sourceNode = ctx.createMediaStreamSource(remoteSourceStream);
+      remoteSourceRef.current = sourceNode;
+
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      remoteAnalyserRef.current = analyser;
+
+      sourceNode.connect(analyser);
+      console.log('Remote audio analyser configured.');
+    } catch (err) {
+      console.error('Failed to setup remote analyser:', err);
+    }
+  }, []);
 
   const processCandidate = useCallback(async (candidate: RTCIceCandidate) => {
     try {
@@ -368,6 +488,21 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
       localStream.current.getTracks().forEach(track => track.stop());
       localStream.current = null;
     }
+    if (audioContextRef.current) {
+      try {
+        if (audioContextRef.current.state !== 'closed') {
+          audioContextRef.current.close();
+        }
+      } catch (err) {
+        console.warn('Error closing AudioContext:', err);
+      }
+      audioContextRef.current = null;
+    }
+    localSourceRef.current = null;
+    micGainNodeRef.current = null;
+    localDestRef.current = null;
+    remoteSourceRef.current = null;
+    remoteAnalyserRef.current = null;
     if (remoteStream.current) {
       remoteStream.current.getTracks().forEach(track => track.stop());
       remoteStream.current = null;
@@ -445,8 +580,9 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
           localVideoRef.current.srcObject = localStream.current;
         }
 
-        localStream.current.getTracks().forEach((track) => {
-          const sender = pc.current?.addTrack(track, localStream.current!);
+        const streamToTransmit = processLocalStream(localStream.current);
+        streamToTransmit.getTracks().forEach((track) => {
+          const sender = pc.current?.addTrack(track, streamToTransmit);
           if (sender && track.kind === 'video') {
             applyVideoBitrateLimit(sender);
           }
@@ -807,6 +943,10 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
           }
         }
 
+        if (event.track.kind === 'audio') {
+          setupRemoteAnalyser(new MediaStream([event.track]));
+        }
+
         if (event.streams && event.streams[0]) {
           if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== event.streams[0]) {
             remoteVideoRef.current.srcObject = event.streams[0];
@@ -831,8 +971,9 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
             localVideoRef.current.srcObject = localStream.current;
           }
 
-          localStream.current.getTracks().forEach((track) => {
-            const sender = pc.current?.addTrack(track, localStream.current!);
+          const streamToTransmit = processLocalStream(localStream.current);
+          streamToTransmit.getTracks().forEach((track) => {
+            const sender = pc.current?.addTrack(track, streamToTransmit);
             if (sender && track.kind === 'video') {
               applyVideoBitrateLimit(sender);
             }
@@ -859,6 +1000,56 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
       hangup();
     };
   }, [isIncoming, startCall, hangup, dynamicMediaConstraints]);
+
+  // Periodic audio level polling for Adaptive Ducking
+  useEffect(() => {
+    let animationFrameId: number;
+
+    const checkVolume = () => {
+      const ctx = audioContextRef.current;
+      const analyser = remoteAnalyserRef.current;
+      const gainNode = micGainNodeRef.current;
+
+      if (ctx && analyser && gainNode) {
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+        
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const remoteVolume = sum / dataArray.length;
+
+        if (isDuckingEnabled) {
+          const threshold = 18; // Speech detection threshold
+          if (remoteVolume > threshold) {
+            // Duck local microphone to ~10% gain (exponential decay, 50ms time constant)
+            gainNode.gain.setTargetAtTime(0.08, ctx.currentTime, 0.05);
+          } else {
+            // Restore microphone gain (100ms time constant)
+            gainNode.gain.setTargetAtTime(1.0, ctx.currentTime, 0.1);
+          }
+        } else {
+          // If ducking is disabled, make sure mic gain is fully restored
+          if (Math.abs(gainNode.gain.value - 1.0) > 0.01) {
+            gainNode.gain.setTargetAtTime(1.0, ctx.currentTime, 0.05);
+          }
+        }
+      }
+
+      animationFrameId = requestAnimationFrame(checkVolume);
+    };
+
+    if (callState === 'connected') {
+      animationFrameId = requestAnimationFrame(checkVolume);
+    }
+
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [callState, isDuckingEnabled]);
 
   return (
     <div className="call-container">
@@ -902,6 +1093,13 @@ export default function CallScreen({ currentUser, remoteUserId, isIncoming, call
           </button>
           <button className={`control-btn toggle ${isVideoOff ? 'off' : ''}`} onClick={toggleVideo}>
             {isVideoOff ? <VideoOff size={32} /> : <Video size={32} />}
+          </button>
+          <button 
+            className={`control-btn toggle ${!isDuckingEnabled ? 'off' : ''}`} 
+            onClick={() => setIsDuckingEnabled(prev => !prev)}
+            title="Toggle Adaptive Ducking"
+          >
+            {isDuckingEnabled ? <Volume2 size={32} /> : <VolumeX size={32} />}
           </button>
           <button ref={actionButtonRef} className="control-btn end" onClick={hangup} autoFocus>
             <PhoneOff size={32} />
