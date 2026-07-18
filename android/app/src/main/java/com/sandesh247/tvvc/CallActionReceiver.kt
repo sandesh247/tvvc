@@ -14,6 +14,16 @@ class CallActionReceiver : BroadcastReceiver() {
         val callId = intent?.getStringExtra("callId")
         Log.d("TVVC", "CallActionReceiver received action: $action, callId: $callId")
         if (action == "DECLINE_CALL" && !callId.isNullOrEmpty()) {
+            // Disconnect the TelecomManager Connection (if routed through ConnectionService)
+            val conn = CallConnection.activeConnection
+            if (conn != null) {
+                Log.d("TVVC", "Declining call via TelecomManager Connection")
+                conn.onReject()
+                // onReject() handles notification cancel, Firestore delete, and Connection cleanup
+                return
+            }
+
+            // Legacy fallback: stop service and cancel notification directly
             try {
                 val serviceIntent = Intent(context, CallNotificationService::class.java)
                 context.stopService(serviceIntent)

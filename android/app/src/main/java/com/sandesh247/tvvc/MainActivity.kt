@@ -2,12 +2,14 @@ package com.sandesh247.tvvc
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.provider.Settings
+import android.telecom.TelecomManager
 import android.util.Log
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -69,6 +71,18 @@ class MainActivity : ComponentActivity() {
                 } catch (e: Exception) {
                     Log.e("TVVC", "Failed to launch full screen intent settings screen", e)
                 }
+            }
+        }
+
+        // Register our PhoneAccount with TelecomManager so the system recognises us
+        // as a self-managed calling app. This is idempotent and must happen before
+        // any incoming call can be routed through ConnectionService.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+                MyFirebaseMessagingService.ensurePhoneAccountRegistered(this, telecomManager)
+            } catch (e: Exception) {
+                Log.e("TVVC", "Failed to register PhoneAccount on startup", e)
             }
         }
 
@@ -197,6 +211,8 @@ class MainActivity : ComponentActivity() {
 
         if (action == "CANCEL_CALL") {
             Log.d("TVVC", "Received CANCEL_CALL action. Notifying web app.")
+            // Disconnect the active TelecomManager Connection (if any)
+            CallConnection.cancelActiveConnection(callId)
             runOnUiThread {
                 webView.evaluateJavascript("if (window.onCallCancelledBySystem) { window.onCallCancelledBySystem(); }", null)
             }
@@ -211,6 +227,10 @@ class MainActivity : ComponentActivity() {
                 Log.e("TVVC", "Failed to cancel notification 101", e)
             }
 
+            // Set the TelecomManager Connection to active (if routed through ConnectionService)
+            CallConnection.activeConnection?.setActive()
+
+            // Also stop the legacy CallNotificationService if it was somehow running
             val serviceIntent = Intent(this, CallNotificationService::class.java)
             try {
                 stopService(serviceIntent)
@@ -350,6 +370,13 @@ class MainActivity : ComponentActivity() {
         fun cancelIncomingCallNotification() {
             val activity = activityRef.get() ?: return
             Log.d("TVVC", "cancelIncomingCallNotification via JS Bridge")
+            // Disconnect the TelecomManager Connection if active
+            CallConnection.activeConnection?.let { conn ->
+                conn.setDisconnected(android.telecom.DisconnectCause(android.telecom.DisconnectCause.LOCAL))
+                conn.destroy()
+                CallConnection.activeConnection = null
+            }
+            // Also stop legacy service
             val intent = Intent(activity, CallNotificationService::class.java)
             activity.stopService(intent)
         }
@@ -379,11 +406,19 @@ class MainActivity : ComponentActivity() {
             try {
                 val audioManager = activity.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
                 if (active) {
+                    // Set the TelecomManager Connection to active state
+                    CallConnection.activeConnection?.setActive()
                     activity.requestCallAudioFocus(audioManager)
                     audioManager.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
                 } else {
                     audioManager.mode = android.media.AudioManager.MODE_NORMAL
                     activity.abandonCallAudioFocus(audioManager)
+                    // Disconnect the TelecomManager Connection when the call ends
+                    CallConnection.activeConnection?.let { conn ->
+                        conn.setDisconnected(android.telecom.DisconnectCause(android.telecom.DisconnectCause.LOCAL))
+                        conn.destroy()
+                        CallConnection.activeConnection = null
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("TVVC", "Error setting call active audio mode", e)

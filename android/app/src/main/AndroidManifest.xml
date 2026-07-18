@@ -57,6 +57,15 @@
             android:exported="false" />
 
         <receiver android:name=".CallActionReceiver" android:exported="false" />
+
+        <service
+            android:name=".CallConnectionService"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>
